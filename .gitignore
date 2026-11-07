@@ -185,3 +185,8 @@ compile_commands.json
 
 # Eclipse generated file for annotation processors
 .factorypath
+
+# Ponte NT (recriados pelo tools/ntbridge/setup.sh) e dados de teste
+tools/ntbridge/libs/
+tools/ntbridge/out/
+tools/ntbridge/*.csv
