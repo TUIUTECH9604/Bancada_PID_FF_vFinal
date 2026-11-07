@@ -164,9 +164,9 @@ public class DialSubsystem extends SubsystemBase {
 
   // ---- Perfil de movimento (/Tuning/Dial/Prof...) ----
   @NotLogged
-  private final TunableNumber profMaxVelDegps = new TunableNumber("Dial/ProfMaxVelDegps", 540.0);
+  private final TunableNumber profMaxVelDegps = new TunableNumber("Dial/ProfMaxVelDegps", 240.0);
   @NotLogged
-  private final TunableNumber profMaxAccelDegps2 = new TunableNumber("Dial/ProfMaxAccelDegps2", 3000.0);
+  private final TunableNumber profMaxAccelDegps2 = new TunableNumber("Dial/ProfMaxAccelDegps2", 1200.0);
 
   // ---- Encoder absoluto ----
   /** Ângulo que o botão Y grava. 270° = ponteiro pendurado para baixo, parado. */
@@ -906,6 +906,25 @@ public class DialSubsystem extends SubsystemBase {
         },
         () -> setProfiledGoal(sequenceTarget(Timer.getFPGATimestamp() - stepStartTime)))
         .withName("Perfil degrau");
+  }
+
+  /**
+   * Perfil até o ângulo fornecido, reavaliado a cada ciclo (o alvo pode mudar enquanto roda).
+   * Usado pelo controle: os botões mudam o alvo e o ponteiro vai até ele com perfil.
+   */
+  public Command profiledHoldCmd(DoubleSupplier deg) {
+    return startRun(this::resetProfile, () -> setProfiledGoal(deg.getAsDouble()))
+        .withName("Perfil (controle)");
+  }
+
+  /** Motor parado (nenhum comando de movimento rodando)? */
+  public boolean isStopped() {
+    return mode == Mode.STOPPED;
+  }
+
+  /** Chegou ao destino do perfil e está a menos de tolDeg dele? */
+  public boolean isAtGoal(double tolDeg) {
+    return tunerProfileDone() && Math.abs(wrap180(goalDeg - getDeg())) < tolDeg;
   }
 
   @NotLogged
