@@ -282,7 +282,16 @@ public class DialSubsystem extends SubsystemBase {
 
   // Desenho da bancada (Elastic / AdvantageScope / Glass: SmartDashboard/Dial/Mecanismo)
   @NotLogged
-  private final Mechanism2d mech = new Mechanism2d(2.4, 2.4);
+  private final Mechanism2d mech = new Mechanism2d(3.0, 3.0);
+  private static final double kMechCenter = 1.5;
+  /** Distância do centro aos números da escala. */
+  private static final double kLabelRadius = 1.34;
+  /** Tamanho de cada dígito "de 7 segmentos" (unidades do desenho). */
+  private static final double kDigitW = 0.06;
+  private static final double kDigitH = 0.11;
+  private static final double kDigitGap = 0.035;
+  /** Raio onde começam as marcas da escala (o ponteiro tem 0,98). */
+  private static final double kScaleRadius = 1.0;
   @NotLogged
   private final MechanismLigament2d ponteiro;
   @NotLogged
@@ -311,14 +320,72 @@ public class DialSubsystem extends SubsystemBase {
 
     motorEncoder.setPosition(0.0);
 
-    MechanismRoot2d centro = mech.getRoot("eixo", 1.2, 1.2);
+    desenharEscala();
+    MechanismRoot2d centro = mech.getRoot("eixo", kMechCenter, kMechCenter);
     alvo = centro.append(new MechanismLigament2d("alvo", 1.0, 0.0, 2, new Color8Bit(Color.kGray)));
     ponteiro = centro.append(
-        new MechanismLigament2d("ponteiro", 1.0, 270.0, 6, new Color8Bit(Color.kOrange)));
+        new MechanismLigament2d("ponteiro", 0.98, 270.0, 6, new Color8Bit(Color.kOrange)));
     SmartDashboard.putData("Dial/Mecanismo", mech);
   }
 
   /** Slot 1 = velocidade, em RPM do motor (= ponteiro com redução 1:1). */
+  /**
+   * Escala de graus em volta do eixo, como a tabela da bancada: marca curta a cada 5°, média a
+   * cada 15° (o passo dos botões A/B), longa e colorida em 0°, 90°, 180° e 270°. 0° = direita,
+   * positivo anti-horário. (O Mechanism2d não desenha texto, por isso só marcas.)
+   */
+  private void desenharEscala() {
+    for (int deg = 0; deg < 360; deg += 5) {
+      boolean cardeal = deg % 90 == 0;
+      boolean media = deg % 15 == 0;
+      double comprimento = cardeal ? 0.16 : media ? 0.10 : 0.05;
+      Color8Bit cor = cardeal ? new Color8Bit(Color.kCyan)
+          : media ? new Color8Bit(Color.kWhite) : new Color8Bit(Color.kDimGray);
+      double rad = Math.toRadians(deg);
+      MechanismRoot2d raiz = mech.getRoot(String.format("marca%03d", deg),
+          kMechCenter + kScaleRadius * Math.cos(rad), kMechCenter + kScaleRadius * Math.sin(rad));
+      raiz.append(new MechanismLigament2d("m", comprimento, deg, cardeal ? 3 : 2, cor));
+      if (deg % 30 == 0) {
+        escrever(Integer.toString(deg), kMechCenter + kLabelRadius * Math.cos(rad),
+            kMechCenter + kLabelRadius * Math.sin(rad), cardeal ? Color.kCyan : Color.kWhite);
+      }
+    }
+  }
+
+  /** Segmentos acesos de cada dígito (a b c d e f g, como num display de relógio). */
+  private static final String[] kSegmentos = {
+    "abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"
+  };
+
+  /**
+   * "Escreve" um número com traços (o Mechanism2d não desenha texto), centrado em (cx, cy).
+   * Cada segmento é uma raiz no ponto inicial com um traço horizontal (0°) ou vertical (90°).
+   */
+  private void escrever(String texto, double cx, double cy, Color cor) {
+    double largura = texto.length() * kDigitW + (texto.length() - 1) * kDigitGap;
+    double x0 = cx - largura / 2.0;
+    double y0 = cy - kDigitH / 2.0;
+    double meia = kDigitH / 2.0;
+    for (int i = 0; i < texto.length(); i++) {
+      double x = x0 + i * (kDigitW + kDigitGap);
+      for (char seg : kSegmentos[texto.charAt(i) - '0'].toCharArray()) {
+        // {x inicial, y inicial, ângulo, comprimento} de cada segmento
+        double[] g = switch (seg) {
+          case 'a' -> new double[] {x, y0 + kDigitH, 0, kDigitW};
+          case 'b' -> new double[] {x + kDigitW, y0 + meia, 90, meia};
+          case 'c' -> new double[] {x + kDigitW, y0, 90, meia};
+          case 'd' -> new double[] {x, y0, 0, kDigitW};
+          case 'e' -> new double[] {x, y0, 90, meia};
+          case 'f' -> new double[] {x, y0 + meia, 90, meia};
+          default -> new double[] {x, y0 + meia, 0, kDigitW}; // 'g'
+        };
+        MechanismRoot2d raiz = mech.getRoot(
+            String.format("num%s_%d%c", texto, i, seg), g[0], g[1]);
+        raiz.append(new MechanismLigament2d("s", g[3], g[2], 2, new Color8Bit(cor)));
+      }
+    }
+  }
+
   private void applyVelGains(SparkMaxConfig cfg) {
     cfg.closedLoop
         .pid(velKP.get(), 0.0, 0.0, ClosedLoopSlot.kSlot1)
