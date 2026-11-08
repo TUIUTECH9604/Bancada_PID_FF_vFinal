@@ -19,6 +19,13 @@ import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DutyCycleEncoder;
 import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.util.Color8Bit;
+import edu.wpi.first.wpilibj.util.Color;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.smartdashboard.MechanismRoot2d;
+import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
+import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
+import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.util.TunableNumber;
@@ -222,6 +229,9 @@ public class DialSubsystem extends SubsystemBase {
   private double lastFastTime = -1.0;
   @NotLogged
   private double loopDtMs = 0.0;
+  /** O Spark está em BRAKE (só durante o SysId)? A simulação usa para saber se o motor freia. */
+  @NotLogged
+  private boolean brakeMode = false;
 
   // ---- SysId: tensão em malha aberta + gravação a 200 Hz (no callback rápido) ----
   private static final int kSysIdMaxSamples = 12000; // 60 s a 5 ms
@@ -265,6 +275,18 @@ public class DialSubsystem extends SubsystemBase {
   private final SparkClosedLoopController sparkPid = motor.getClosedLoopController();
   @NotLogged
   private final DutyCycleEncoder absEncoder = new DutyCycleEncoder(kAbsDioPort);
+  /** Física simulada (só no computador; no robô real é null). */
+  @NotLogged
+  private final DialSim sim =
+      RobotBase.isSimulation() ? new DialSim(motor, absEncoder, kAbsInverted, kAbsZeroOffsetDeg) : null;
+
+  // Desenho da bancada (Elastic / AdvantageScope / Glass: SmartDashboard/Dial/Mecanismo)
+  @NotLogged
+  private final Mechanism2d mech = new Mechanism2d(2.4, 2.4);
+  @NotLogged
+  private final MechanismLigament2d ponteiro;
+  @NotLogged
+  private final MechanismLigament2d alvo;
 
   public DialSubsystem() {
     System.out.println("[Dial] Firmware do Spark MAX: " + motor.getFirmwareString());
@@ -288,6 +310,12 @@ public class DialSubsystem extends SubsystemBase {
     tryConfigure("filtro do NEO", neo);
 
     motorEncoder.setPosition(0.0);
+
+    MechanismRoot2d centro = mech.getRoot("eixo", 1.2, 1.2);
+    alvo = centro.append(new MechanismLigament2d("alvo", 1.0, 0.0, 2, new Color8Bit(Color.kGray)));
+    ponteiro = centro.append(
+        new MechanismLigament2d("ponteiro", 1.0, 270.0, 6, new Color8Bit(Color.kOrange)));
+    SmartDashboard.putData("Dial/Mecanismo", mech);
   }
 
   /** Slot 1 = velocidade, em RPM do motor (= ponteiro com redução 1:1). */
@@ -523,6 +551,10 @@ public class DialSubsystem extends SubsystemBase {
     double now = Timer.getFPGATimestamp();
     double dt = lastFastTime < 0 ? kFastPeriodSec : now - lastFastTime;
     lastFastTime = now;
+    if (sim != null) {
+      // física primeiro; o controle lê os sensores novos. Motor parado em COAST = solto (sem freio)
+      sim.step(MathUtil.clamp(dt, 0.001, 0.03), mode == Mode.STOPPED && !brakeMode);
+    }
     if (mode == Mode.SYSID) {
       sysIdStep(now);
       return;
@@ -650,6 +682,7 @@ public class DialSubsystem extends SubsystemBase {
     sysIdLastWrapped = Double.NaN;
     SparkMaxConfig cfg = new SparkMaxConfig();
     cfg.idleMode(IdleMode.kBrake);
+    brakeMode = true;
     tryConfigure("brake (SysId)", cfg);
   }
 
@@ -671,6 +704,7 @@ public class DialSubsystem extends SubsystemBase {
     SparkMaxConfig cfg = new SparkMaxConfig();
     cfg.idleMode(IdleMode.kCoast);
     tryConfigure("coast", cfg);
+    brakeMode = false;
     try (PrintWriter w = new PrintWriter(new FileWriter(path))) {
       w.println("t,test,cmdV,appV,posDeg,neoRpm");
       for (int i = 0; i < sysIdN; i++) {
@@ -966,6 +1000,10 @@ public class DialSubsystem extends SubsystemBase {
 
   @Override
   public void periodic() {
+    ponteiro.setAngle(getDeg());
+    double t = getTargetDeg();
+    alvo.setLength(Double.isNaN(t) ? 0.0 : 1.1);
+    alvo.setAngle(Double.isNaN(t) ? 0.0 : t);
     updateGainsIfChanged();
     updateContinuous();
   }
