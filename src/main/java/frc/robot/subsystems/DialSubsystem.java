@@ -171,9 +171,9 @@ public class DialSubsystem extends SubsystemBase {
 
   // ---- Perfil de movimento (/Tuning/Dial/Prof...) ----
   @NotLogged
-  private final TunableNumber profMaxVelDegps = new TunableNumber("Dial/ProfMaxVelDegps", 240.0);
+  private final TunableNumber profMaxVelDegps = new TunableNumber("Dial/ProfMaxVelDegps", 720.0);
   @NotLogged
-  private final TunableNumber profMaxAccelDegps2 = new TunableNumber("Dial/ProfMaxAccelDegps2", 1200.0);
+  private final TunableNumber profMaxAccelDegps2 = new TunableNumber("Dial/ProfMaxAccelDegps2", 4000.0);
 
   // ---- Encoder absoluto ----
   /** Ângulo que o botão Y grava. 270° = ponteiro pendurado para baixo, parado. */
