@@ -12,34 +12,42 @@ import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
 /**
  * Física da bancada para a simulação (só existe quando o código roda no computador).
  *
- * <p>Todos os números vêm das MEDIÇÕES na bancada real (SysId de 2026-11-07), não de chute:
- *   kG = 0,352 V, kS = 0,077 V, kV = 0,00247 V/RPM, kA = 0,0000786 V/(°/s²)
+ * <p>Todos os números vêm de MEDIÇÕES na bancada real, não de chute:
+ *   - kG = 0,362 V (autoajuste) e kS = 0,077 V, kV = 0,00247 V/RPM (SysId, 2026-11-07)
+ *   - inércia e atritos do eixo: ajustados para reproduzir o PÊNDULO real (ponteiro solto em 0°,
+ *     2026-11-09). Viradas reais 191°, 337°, 210°, 320°, 226°, 305°, 241°, 292°; o modelo dá
+ *     192°, 338°, 211°, 321°, 227°, 306°, 240°, 294° (erro de 1–2° em cada).
  *
  * <p>Daí:
  *   - torque por volt do NEO parado: 2,6 N·m / 12 V = 0,217 N·m/V
- *   - inércia J = kA·(180/π)·0,217 ≈ 0,000976 kg·m²
+ *   - inércia J = 0,000722 kg·m² pelo pêndulo — confere com o kA do SysId pelo método direto
+ *     (0,0000565 V/(°/s²) → J ≈ 0,00070)
  *   - o SingleJointedArmSim modela a gravidade como uma barra uniforme: aceleração =
- *     1,5·g·cos θ / L. Para bater com o kG medido (0,352·0,217/J ≈ 78 rad/s²), L ≈ 0,188 m.
+ *     1,5·g·cos θ / L. Para bater com o kG, L = 1,5·g·J / (kG·0,217) ≈ 0,144 m.
  *     (Não é o comprimento real do ponteiro: é o "comprimento equivalente" que dá o mesmo torque.)
- *   - motor: NEO com velocidade livre de 12 V / kV ≈ 4858 RPM (inclui o atrito viscoso medido)
- *   - atrito de Coulomb (kS) em movimento e um atrito parado pequeno (0,01 V); o simulador
- *     não tem atrito, é somado aqui
+ *   - motor: NEO com velocidade livre de 12 V / kV ≈ 4858 RPM
+ *   - perdas: kS (0,077 V) só com o motor acionado; solto, atrito do eixo 0,015 V + viscoso
+ *     0,0001 V/RPM
  *   - motor solto (COAST) não freia; só no BRAKE (SysId) o motor parado freia
+ *   - atraso de 10 ms entre o controle e o motor (CAN + Spark + leitura do sensor): sem ele a
+ *     simulação quase não passava do alvo, e o real passa ~2°
  *   - Through Bore: leitura quantizada em 1024 passos (0,35°), como o sensor real
  */
 class DialSim {
 
   private static final double kTorquePerVolt = 2.6 / 12.0;
-  private static final double kJ = 0.0000786 * (180.0 / Math.PI) * kTorquePerVolt;
-  private static final double kEquivLengthM = 0.188;
+  private static final double kJ = 0.000722;
+  private static final double kGVolts = 0.362;
+  private static final double kEquivLengthM = 1.5 * 9.81 * kJ / (kGVolts * kTorquePerVolt);
   private static final double kSVolts = 0.077;
   /** Atrito para começar a mover parado (V). Solto, o ponteiro real parava a ±1° de 270°. */
   private static final double kStaticVolts = 0.01;
   /** Atrito mecânico em movimento com o motor solto (V equivalentes). */
-  private static final double kCoastFrictionVolts = 0.01;
-  /** Atrito viscoso: kV medido (0,00247) − kV teórico do NEO (12 V / 5676 RPM). */
-  private static final double kViscousVoltsPerRpm = 0.00247 - 12.0 / 5676.0;
-  private static final double kGVolts = 0.352;
+  private static final double kCoastFrictionVolts = 0.015;
+  /** Atrito viscoso com o motor solto (V por RPM), pelo pêndulo real. Acionado, já está no kV. */
+  private static final double kViscousVoltsPerRpm = 0.0001;
+  /** Atraso entre o controle mandar a tensão e o motor aplicar (s). */
+  private static final double kActuatorDelaySec = 0.010;
   private static final double kFreeSpeedRpm = 12.0 / 0.00247;
 
   private final DCMotor neo = new DCMotor(
@@ -49,6 +57,8 @@ class DialSim {
   private final DutyCycleEncoderSim absSim;
   private final boolean absInverted;
   private final double absOffsetDeg;
+  /** Fila de tensões pedidas (V) para aplicar com atraso; o tamanho vem de kActuatorDelaySec. */
+  private final java.util.ArrayDeque<Double> delayLine = new java.util.ArrayDeque<>();
 
   DialSim(SparkMax motor, DutyCycleEncoder abs, boolean absInverted, double absOffsetDeg) {
     // Sem limites de curso: o ponteiro dá voltas completas. Começa pendurado (270° = −90°).
@@ -74,11 +84,15 @@ class DialSim {
 
     double volts;
     if (coasting) {
-      // Tensão que zera a corrente (só a força contraeletromotriz) e o atrito viscoso, que na
-      // malha fechada já está embutido no kV medido
+      // Tensão que zera a corrente: só a força contraeletromotriz, o motor não freia
       volts = omega / neo.KvRadPerSecPerVolt - kViscousVoltsPerRpm * rpm;
     } else {
-      volts = spark.getAppliedOutput() * 12.0;
+      delayLine.addLast(spark.getAppliedOutput() * 12.0);
+      int atraso = (int) Math.round(kActuatorDelaySec / dt);
+      while (delayLine.size() > atraso + 1) {
+        delayLine.removeFirst();
+      }
+      volts = delayLine.peekFirst();
     }
 
     // Perdas contra o movimento. O kS medido (0,077 V) NÃO é só atrito do eixo: se fosse, o

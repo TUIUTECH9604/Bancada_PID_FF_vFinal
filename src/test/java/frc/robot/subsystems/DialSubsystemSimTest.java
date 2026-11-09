@@ -108,6 +108,7 @@ class DialSubsystemSimTest {
     System.out.printf("[sim] solto em 0°: primeira virada em %.1f°, parou em %.1f°%n",
         primeiraVirada, dial.getDeg());
     assertTrue(primeiraVirada < 215.0, "o pêndulo perdeu força demais: virou em " + primeiraVirada);
-    assertEquals(270.0, dial.getDeg(), 2.0, "solto, deveria parar pendurado");
+    // Com atrito do eixo de 0,015 V, ele pode parar até asin(0,015/0,362) ≈ 2,4° de 270°
+    assertEquals(270.0, dial.getDeg(), 3.0, "solto, deveria parar pendurado");
   }
 }
