@@ -18,6 +18,7 @@ import edu.wpi.first.math.filter.LinearFilter;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DutyCycleEncoder;
+import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.util.Color8Bit;
 import edu.wpi.first.wpilibj.util.Color;
@@ -71,6 +72,18 @@ public class DialSubsystem extends SubsystemBase {
   /** Porta DIO da roboRIO com o fio de sinal (branco = PWM absoluto) do Through Bore. */
   private static final int kAbsDioPort = 0;
 
+  /**
+   * Quadratura do MESMO Through Bore (fios A e B): 2048 ciclos/volta = 8192 contagens (0,044°),
+   * 8× mais fina que o sinal absoluto. Usada só para a VELOCIDADE (a derivada do PID); a posição
+   * continua vindo do absoluto, que não perde o zero.
+   */
+  private static final int kQuadDioA = 1;
+  private static final int kQuadDioB = 2;
+  /** true se a quadratura contar ao contrário do absoluto (o teste à mão confirma). */
+  private static final boolean kQuadInverted = true; // conferido à mão: contava ao contrário
+  /** Se quadratura e absoluto discordarem mais que isto (graus), a quadratura é descartada. */
+  private static final double kQuadMaxDriftDeg = 5.0;
+
   /** Voltas do MOTOR para 1 volta do PONTEIRO (1.0 = ponteiro direto no eixo do NEO). */
   private static final double kGearRatio = 1.0;
 
@@ -83,6 +96,12 @@ public class DialSubsystem extends SubsystemBase {
   /** Zero do Through Bore, em graus. Calibre com o botão Y e copie aqui o valor do Riolog. */
   private static final double kAbsZeroOffsetDeg = 223.89;
 
+  /**
+   * Limite de corrente do Spark (A). 35 A só ajudou o perfil 1080°/s, 8000°/s², que não é usado;
+   * com 720/4000 não muda nada e 20 A protege o motor se o ponteiro travar.
+   * Atenção: com pouca tensão, a corrente LIDA pelo Spark dá saltos falsos (27–34 A lidos com
+   * 0,85 V aplicados, quando o máximo físico é ~7 A) e marca 0 A segurando o ponteiro.
+   */
   private static final int kCurrentLimitA = 20;
   private static final double kMaxFFVolts = 4.0;
   private static final double kManualMaxVolts = 3.0;
@@ -102,7 +121,7 @@ public class DialSubsystem extends SubsystemBase {
   @NotLogged
   private final TunableNumber kI = new TunableNumber("Dial/kI", 0.004);
   @NotLogged
-  private final TunableNumber kD = new TunableNumber("Dial/kD", 0.00012);
+  private final TunableNumber kD = new TunableNumber("Dial/kD", 0.0003);
   @NotLogged
   private final TunableNumber iZone = new TunableNumber("Dial/IZoneDeg", 3.0);
   /**
@@ -121,6 +140,12 @@ public class DialSubsystem extends SubsystemBase {
   /** Filtro passa-baixa da derivada (constante de tempo, s). 0 = sem filtro. */
   @NotLogged
   private final TunableNumber dFilterSec = new TunableNumber("Dial/DFilterSec", 0.005);
+  /**
+   * De onde vem a velocidade da derivada: 1 = quadratura do Through Bore (fina), 0 = diferença
+   * de leituras do absoluto (antigo). Dá para trocar ao vivo e comparar.
+   */
+  @NotLogged
+  private final TunableNumber useQuadForD = new TunableNumber("Dial/UseQuadForD", 1.0);
   @NotLogged
   // kS medido = 0,091 V, mas no modo posição ele troca de sinal a cada cruzamento do alvo e faz
   // o ponteiro tremer (~8 Hz). O kI (só dentro do IZone) vence o atrito parado sem isso.
@@ -275,10 +300,24 @@ public class DialSubsystem extends SubsystemBase {
   private final SparkClosedLoopController sparkPid = motor.getClosedLoopController();
   @NotLogged
   private final DutyCycleEncoder absEncoder = new DutyCycleEncoder(kAbsDioPort);
+  @NotLogged
+  private final Encoder quadEncoder =
+      new Encoder(kQuadDioA, kQuadDioB, kQuadInverted, Encoder.EncodingType.k4X);
+  /** Diferença (graus) entre quadratura e absoluto contínuo, fixada quando a quadratura é zerada. */
+  @NotLogged
+  private double quadOffsetDeg = Double.NaN;
+  /** Quadratura descartada (discordou do absoluto): volta para a derivada antiga até reiniciar. */
+  @NotLogged
+  private boolean quadFault = false;
+  @NotLogged
+  private double prevTargetDeg = 0.0;
+  @NotLogged
+  private double prevQuadDeg = 0.0;
   /** Física simulada (só no computador; no robô real é null). */
   @NotLogged
   private final DialSim sim =
-      RobotBase.isSimulation() ? new DialSim(motor, absEncoder, kAbsInverted, kAbsZeroOffsetDeg) : null;
+      RobotBase.isSimulation()
+          ? new DialSim(motor, absEncoder, quadEncoder, kAbsInverted, kAbsZeroOffsetDeg) : null;
 
   // Desenho da bancada (Elastic / AdvantageScope / Glass: SmartDashboard/Dial/Mecanismo)
   @NotLogged
@@ -303,6 +342,8 @@ public class DialSubsystem extends SubsystemBase {
     // Through Bore V1: PWM de ~975,6 Hz, pulso de 1 a 1024 µs num período de 1025 µs
     absEncoder.setAssumedFrequency(975.6);
     absEncoder.setDutyCycleRange(1.0 / 1025.0, 1024.0 / 1025.0);
+    // 4X: getDistance/getRate em graus e graus/s (2048 ciclos por volta)
+    quadEncoder.setDistancePerPulse(360.0 / 2048.0);
 
     // Motor (essencial). Realimentação do Spark = encoder do NEO (padrão), usada só na velocidade.
     SparkMaxConfig cfg = new SparkMaxConfig();
@@ -447,6 +488,29 @@ public class DialSubsystem extends SubsystemBase {
   }
 
   /** Velocidade do ponteiro em RPM (derivada do Through Bore, média de 5 ciclos). */
+  /** Ângulo contínuo pela quadratura (graus; só diferenças importam). */
+  public double getQuadDeg() {
+    return quadEncoder.getDistance();
+  }
+
+  /** Velocidade pela quadratura, em RPM (para comparar com getVelRpm). */
+  public double getQuadVelRpm() {
+    return quadEncoder.getRate() / 6.0;
+  }
+
+  /** Quadratura menos absoluto contínuo, desde que a quadratura foi zerada (deveria ficar ~0). */
+  public double getQuadDriftDeg() {
+    return Double.isNaN(quadOffsetDeg) ? 0.0 : quadEncoder.getDistance() - contDeg - quadOffsetDeg;
+  }
+
+  public boolean isQuadFault() {
+    return quadFault;
+  }
+
+  private boolean quadOk() {
+    return useQuadForD.get() > 0.5 && !quadFault && !Double.isNaN(quadOffsetDeg);
+  }
+
   public double getVelRpm() {
     return velRpm;
   }
@@ -689,10 +753,25 @@ public class DialSubsystem extends SubsystemBase {
     // Derivada do erro, com passa-baixa (cada passo do encoder vira um pico em 5 ms)
     if (firstStep) {
       prevError = error;
+      prevTargetDeg = targetDeg;
+      prevQuadDeg = quadEncoder.getDistance();
       errDeriv = 0.0;
       firstStep = false;
     }
-    double rawDeriv = wrap180(error - prevError) / dt;
+    double rawDeriv;
+    double quadDeg = quadEncoder.getDistance();
+    if (quadOk()) {
+      // d(erro)/dt = d(alvo)/dt − velocidade pela quadratura. A velocidade vem da DIFERENÇA de
+      // posição a cada passo (degraus de 0,044°/5 ms = 9°/s), não de Encoder.getRate(): o
+      // getRate mede o tempo entre pulsos e, com o ponteiro parado, repete a última velocidade —
+      // o kD empurrava um ponteiro parado e ele oscilava ±0,7° a 6 Hz (testado na bancada).
+      double targetRate = wrap180(targetDeg - prevTargetDeg) / dt;
+      rawDeriv = targetRate - (quadDeg - prevQuadDeg) / dt;
+    } else {
+      rawDeriv = wrap180(error - prevError) / dt;
+    }
+    prevQuadDeg = quadDeg;
+    prevTargetDeg = targetDeg;
     prevError = error;
     double tau = Math.max(0.0, dFilterSec.get());
     errDeriv += (rawDeriv - errDeriv) * (dt / (tau + dt));
@@ -826,6 +905,7 @@ public class DialSubsystem extends SubsystemBase {
       contDeg = wrapped;
       velFilter.reset();
       velRpm = 0.0;
+      quadOffsetDeg = Double.NaN; // a quadratura é recasada com o absoluto no próximo ciclo
       return;
     }
     double delta = wrap180(wrapped - lastWrappedDeg);
@@ -835,6 +915,16 @@ public class DialSubsystem extends SubsystemBase {
     lastTime = now;
     if (dt > 1e-4) {
       velRpm = velFilter.calculate(delta / dt / 6.0); // graus/s → RPM
+    }
+
+    // Confere a quadratura contra o absoluto: se um fio soltar ou a contagem estiver invertida,
+    // ela para de concordar e é descartada (o PID volta para a derivada antiga)
+    if (Double.isNaN(quadOffsetDeg)) {
+      quadOffsetDeg = quadEncoder.getDistance() - contDeg;
+    } else if (!quadFault && Math.abs(getQuadDriftDeg()) > kQuadMaxDriftDeg) {
+      quadFault = true;
+      System.out.printf("[Dial] Quadratura DESCARTADA: discordou %.1f° do absoluto. Confira os "
+          + "fios A/B (DIO %d e %d) e kQuadInverted%n", getQuadDriftDeg(), kQuadDioA, kQuadDioB);
     }
   }
 

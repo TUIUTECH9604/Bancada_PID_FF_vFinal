@@ -6,7 +6,9 @@ import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.util.Units;
 import edu.wpi.first.wpilibj.DutyCycleEncoder;
+import edu.wpi.first.wpilibj.Encoder;
 import edu.wpi.first.wpilibj.simulation.DutyCycleEncoderSim;
+import edu.wpi.first.wpilibj.simulation.EncoderSim;
 import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
 
 /**
@@ -55,17 +57,20 @@ class DialSim {
   private final SingleJointedArmSim arm;
   private final SparkMaxSim spark;
   private final DutyCycleEncoderSim absSim;
+  private final EncoderSim quadSim;
   private final boolean absInverted;
   private final double absOffsetDeg;
   /** Fila de tensões pedidas (V) para aplicar com atraso; o tamanho vem de kActuatorDelaySec. */
   private final java.util.ArrayDeque<Double> delayLine = new java.util.ArrayDeque<>();
 
-  DialSim(SparkMax motor, DutyCycleEncoder abs, boolean absInverted, double absOffsetDeg) {
+  DialSim(SparkMax motor, DutyCycleEncoder abs, Encoder quad, boolean absInverted,
+      double absOffsetDeg) {
     // Sem limites de curso: o ponteiro dá voltas completas. Começa pendurado (270° = −90°).
     arm = new SingleJointedArmSim(neo, 1.0, kJ, kEquivLengthM, -1e6, 1e6, true, -Math.PI / 2);
     spark = new SparkMaxSim(motor, neo);
     absSim = new DutyCycleEncoderSim(abs);
     absSim.setConnected(true);
+    quadSim = new EncoderSim(quad);
     this.absInverted = absInverted;
     this.absOffsetDeg = absOffsetDeg;
     writeSensors();
@@ -128,6 +133,9 @@ class DialSim {
     double raw = MathUtil.inputModulus(rawDeg / 360.0, 0.0, 1.0);
     raw = Math.floor(raw * 1024.0) / 1024.0; // resolução real do Through Bore
     absSim.set(raw);
+    // Quadratura: ângulo contínuo, com a resolução real (2048 ciclos por volta)
+    quadSim.setDistance(Math.floor(deg / 360.0 * 2048.0) * 360.0 / 2048.0);
+    quadSim.setRate(Math.toDegrees(arm.getVelocityRadPerSec()));
   }
 
   /** Ângulo verdadeiro da simulação (sem quantização), em graus 0–360. */
