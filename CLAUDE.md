@@ -8,6 +8,10 @@ automaticamente). Conversa em **português**. Última atualização: 2026-11-09.
 O trabalho começou num notebook e continua em outro: a conversa e a memória anteriores NÃO
 vieram junto — este arquivo é o que sobrou delas. Então:
 
+0. **Descubra quem é e o que quer.** Se for outra pessoa ou **outro projeto/subsistema**
+   (braço, elevador, shooter...), o guia é `docs/METODO_SUBSISTEMAS.md`: siga a ordem dele
+   (entender o mecanismo → sensor → segurança → feedforward → perfil → PID → validação robusta →
+   registrar). Os números desta bancada não servem para outro mecanismo; o método, sim.
 1. **Cumprimente e situe o usuário**: diga em 2–3 linhas onde paramos (seção "Estado atual") e
    pergunte o que ele quer fazer. Não refaça testes já feitos sem motivo.
 2. **Confira o ambiente** antes de usar o robô (uma vez por computador):
