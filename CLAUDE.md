@@ -3,6 +3,35 @@
 Contexto para continuar o trabalho em qualquer computador (o Claude Code lê este arquivo
 automaticamente). Conversa em **português**. Última atualização: 2026-11-09.
 
+## Roteiro para a próxima conversa (LER PRIMEIRO)
+
+O trabalho começou num notebook e continua em outro: a conversa e a memória anteriores NÃO
+vieram junto — este arquivo é o que sobrou delas. Então:
+
+1. **Cumprimente e situe o usuário**: diga em 2–3 linhas onde paramos (seção "Estado atual") e
+   pergunte o que ele quer fazer. Não refaça testes já feitos sem motivo.
+2. **Confira o ambiente** antes de usar o robô (uma vez por computador):
+   - WPILib 2026 instalado? (`C:/Users/Public/wpilib/2026/jdk` no Windows; se estiver em outro
+     lugar, use esse caminho no `JAVA_HOME` e no `WPILIB_HOME` do `setup.sh`).
+   - `./gradlew build` e `./gradlew test` passam?
+   - `tools/ntbridge/setup.sh` já rodou? (cria `libs/` e `out/`, que não vão para o git).
+   - Python 3 com `numpy` (para as análises).
+3. **Com o robô**: siga "Como trabalhar com o robô" — o usuário habilita/desabilita, deploy só
+   desabilitado, explicar antes de mover o motor.
+4. **Antes de mudar ganhos**, rode `tools/ntbridge/robusto.sh` na configuração atual para ter a
+   referência; compare cada mudança com ele (de preferência 2 rodadas cada).
+5. **Ao terminar algo**: commit em português explicando o porquê e os números medidos, e
+   atualize este arquivo (estado, ganhos, lições). O push é o usuário que faz pelo GitHub
+   Desktop — avise quando houver commits para enviar.
+6. Se o `git push` pela linha de comando falhar com 403, é a conta do git do computador sem
+   permissão no repositório da equipe: peça para o usuário enviar pelo GitHub Desktop.
+
+## Estado atual (2026-11-09)
+
+Bancada **pronta e validada**: o tremor visível foi resolvido (causa: quadro de controle do
+Spark a 20 ms). Ganhos na tabela abaixo, gravados no código e no robô. Nada pendente no git.
+Próximos passos possíveis estão em "Ideias que ficaram para depois".
+
 ## O que é
 
 Bancada de testes de controle de posição, no estilo de um braço de FRC:
@@ -42,8 +71,9 @@ Bancada de testes de controle de posição, no estilo de um braço de FRC:
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | 0,362 V | 0,003 | 0,01 | 3° | 0,5° | 0,00015 | 5 ms | 0 | 0 | 0,00247 V/RPM | 0,0000786 V/(°/s²) | 720°/s, 4000°/s² |
 
-Limite de corrente 20 A. Resultado com o controle: tremor rápido 0,005°, parado 0,17°,
-assenta em ~0,8 s, erro final ~0,2°.
+Limite de corrente 20 A. Referência (`robusto.sh` e uso com o controle): tremor rápido
+0,002–0,005°, parado 0,08–0,17°, assenta em 0,6–0,8 s (máx. ~1,3 s), passa do alvo 0,6–0,8° em
+média (máx. ~1,9°), erro final ~0,2–0,3°.
 
 ## Lições (não repetir os erros)
 
@@ -74,7 +104,9 @@ assenta em ~0,8 s, erro final ~0,2°.
   `/Tuning/Dial/...` (voltam ao padrão do código ao reiniciar).
 - Telemetria do Epilogue **sem barra inicial**: `Robot/m_robotContainer/dial/getDeg`, etc.
 - Ponte NetworkTables e scripts de teste: `tools/ntbridge/` (ver o README de lá; rodar
-  `./setup.sh` uma vez). IP do robô por cabo: **169.254.29.48** (`NT_SERVER` para mudar).
+  `./setup.sh` uma vez). Os principais: `robusto.sh` (o teste que valida ganhos, com parada
+  automática), `sweep.sh` (aplica ganhos ao vivo e roda o robusto), `mapa.sh` + `mapa_ana.py`
+  (mapa de 0° a 180° em passos de 15°). IP do robô por cabo: **169.254.29.48** (`NT_SERVER` para mudar).
   No AdvantageScope, usar esse IP em Preferences → roboRIO Address.
 - Build/deploy: `JAVA_HOME` apontando para o JDK do WPILib 2026
   (`C:/Users/Public/wpilib/2026/jdk` no Windows); `./gradlew build`, `deploy`, `test`,

@@ -190,3 +190,4 @@ compile_commands.json
 tools/ntbridge/libs/
 tools/ntbridge/out/
 tools/ntbridge/*.csv
+tools/ntbridge/abortou.flag

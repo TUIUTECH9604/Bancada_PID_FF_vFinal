@@ -49,6 +49,22 @@ perfil e o kA. Restaure os valores (ou reinicie o código) ao terminar.
 Valores de referência da bancada (ponteiro ~400 g): kP 0,003, kD 0,00012 → overshoot ≤ 1°,
 erro final ~0,2°, tremida 0,1°.
 
+## Testes finos (os que validaram os ganhos atuais)
+
+| Script | O que faz |
+|---|---|
+| `./robusto.sh arq.csv` | **o teste de referência**: passos de 15° e movimentos de 90°/180°, como o controle. **Parada automática** se o ponteiro oscilar (4+ inversões de sentido >0,7° em 1 s, duas vezes seguidas). No fim imprime o resumo ou "ABORTADO (instavel)" |
+| `./sweep.sh nome "kD=0.00015 kI=0.01"` | aplica parâmetros ao vivo (`/Tuning/Dial/...`) e roda o `robusto.sh` → `rb_nome.csv` |
+| `./mapa.sh arq.csv` | passos de 15° de 0° a 180° e de volta (sem movimentos grandes) |
+| `python mapa_ana.py arq.csv` | análise ângulo a ângulo; `-r arq1.csv arq2.csv ...` só o resumo |
+
+O resumo mostra: **tremor rápido** (vibração > ~5 Hz, graus rms), **pp** (quanto mexe parado),
+**assenta** (tempo até parar de se mexer, pela quadratura), **overshoot** e **erro final**.
+Referência atual: tremor 0,002–0,005, pp 0,08–0,17, assenta 0,6–0,8 s, overshoot 0,6–0,8°.
+
+Lições: valide com movimentos grandes (só passos pequenos aprovaram ganhos que oscilavam no uso
+real) e repita cada configuração (o atrito faz variar muito entre rodadas).
+
 ## SysId (kS, kG, kV, kA)
 
 1. Robô habilitado, ponteiro pendurado e parado, área livre (ele dá voltas a até ~200 RPM).
