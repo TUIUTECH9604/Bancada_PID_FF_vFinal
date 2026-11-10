@@ -104,7 +104,11 @@ public class NtBridge {
     int n = 0;
     try (PrintWriter w = new PrintWriter(new FileWriter(file))) {
       w.println("t,topic,value");
+      // Para antes do tempo se existir o arquivo indicado em -Dnt.stopfile (usado pelos testes
+      // com parada automática)
+      String stopFile = System.getProperty("nt.stopfile", "");
       while (System.currentTimeMillis() < end) {
+        if (!stopFile.isEmpty() && new File(stopFile).exists()) break;
         for (NetworkTableEvent e : poller.readQueue()) {
           if (e.valueData == null) continue;
           NetworkTableValue v = e.valueData.value;

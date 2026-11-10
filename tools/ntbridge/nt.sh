@@ -17,5 +17,5 @@ if [ "$1" = "enabled" ]; then
   [[ "$v" =~ ^[0-9]+$ ]] && (( v & 1 )) && exit 0 || exit 1
 fi
 CP="out;libs/ntcore-java.jar;libs/wpiutil-java.jar;libs/wpinet-java.jar;libs/quickbuf-runtime.jar;libs/jackson-core.jar;libs/jackson-databind.jar;libs/jackson-annotations.jar"
-PATH="$D/libs:$PATH" "$JP/java" -Djava.library.path=libs -Dnt.server="${NT_SERVER:-169.254.29.48}" \
+PATH="$D/libs:$PATH" "$JP/java" -Djava.library.path=libs -Dnt.server="${NT_SERVER:-169.254.29.48}" -Dnt.stopfile="${NT_STOPFILE:-}" \
   -cp "$CP" NtBridge "$@" 2>&1 | grep -v "^NT:"

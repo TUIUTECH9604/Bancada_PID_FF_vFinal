@@ -109,6 +109,7 @@ public class DialSubsystem extends SubsystemBase {
 
   /** Período do callback rápido de controle (registrado no Robot com addPeriodic). */
   public static final double kFastPeriodSec = 0.005;
+  private static final int kFastPeriodMs = 5;
   /** Se nenhum comando renovar o pedido nesse tempo, o callback rápido para o motor. */
   private static final double kRequestTimeoutSec = 0.1;
 
@@ -119,9 +120,9 @@ public class DialSubsystem extends SubsystemBase {
   @NotLogged
   private final TunableNumber kP = new TunableNumber("Dial/kP", 0.003);
   @NotLogged
-  private final TunableNumber kI = new TunableNumber("Dial/kI", 0.004);
+  private final TunableNumber kI = new TunableNumber("Dial/kI", 0.01);
   @NotLogged
-  private final TunableNumber kD = new TunableNumber("Dial/kD", 0.0003);
+  private final TunableNumber kD = new TunableNumber("Dial/kD", 0.00015);
   @NotLogged
   private final TunableNumber iZone = new TunableNumber("Dial/IZoneDeg", 3.0);
   /**
@@ -176,7 +177,9 @@ public class DialSubsystem extends SubsystemBase {
   @NotLogged
   private final TunableNumber velKP = new TunableNumber("Dial/VelkP", 0.0005);
   @NotLogged
-  private final TunableNumber velKS = new TunableNumber("Dial/VelkS", 0.077);
+  // 0: o kS do SysId (0,077 V) empurrava o ponteiro na frenagem e ele passava ~4° do alvo; o
+  // atrito real em movimento é bem menor (pêndulo: ~0,015 V)
+  private final TunableNumber velKS = new TunableNumber("Dial/VelkS", 0.0);
   @NotLogged
   private final TunableNumber velKV = new TunableNumber("Dial/VelkV", 0.00247);
   /**
@@ -360,6 +363,10 @@ public class DialSubsystem extends SubsystemBase {
     tryConfigure("filtro do NEO", neo);
 
     motorEncoder.setPosition(0.0);
+
+    // A REVLib envia o quadro de controle (a tensão pedida) ao Spark a cada 20 ms por padrão:
+    // sem isto, a malha de 5 ms só chegava ao motor a cada 20 ms (atraso de até 20 ms).
+    motor.setControlFramePeriodMs(kFastPeriodMs);
 
     desenharEscala();
     MechanismRoot2d centro = mech.getRoot("eixo", kMechCenter, kMechCenter);
