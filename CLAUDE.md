@@ -81,7 +81,9 @@ média (máx. ~1,9°), erro final ~0,2–0,3°.
 
 ## Lições (não repetir os erros)
 
-1. **Quadro de controle do Spark**: sempre `setControlFramePeriodMs` igual ao período da malha.
+1. **20 ms pode não bastar**: malha a 5 ms (`addPeriodic`) **e** tensão enviada a 5 ms
+   (`setControlFramePeriodMs(5)`; o padrão da REVLib é 20 ms). Só a malha rápida não adianta.
+   Detalhes, sintomas e cuidados (carga no CAN) em `docs/METODO_SUBSISTEMAS.md`, seção 6.1.
 2. **Testar com movimentos grandes**: ganhos aprovados só com passos de 15° oscilavam ±10–25°
    depois de movimentos de 90°/180°. Validar com passos pequenos E grandes, com **parada
    automática** (4+ inversões de sentido >0,7° em 1 s).

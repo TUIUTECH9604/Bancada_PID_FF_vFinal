@@ -109,12 +109,55 @@ Armadilhas:
 
 ## 6. PID (por último, e com atenção ao atraso)
 
-- **Confira o caminho do comando até o motor.** A REVLib manda a tensão ao Spark a cada
-  **20 ms por padrão**. Se a malha roda mais rápido, use
-  `motor.setControlFramePeriodMs(período da malha)`. **Isso foi a causa de dias de "tremor"**
-  na bancada: a malha de 5 ms só chegava ao motor a cada 20 ms.
-- Malha na roboRIO: use `addPeriodic` com 5 ms se o sensor está na RIO. Se o sensor está no
-  Spark, a malha onboard (1 kHz) é ainda melhor.
+### 6.1 20 ms pode não ser rápido o bastante: malha e envio da tensão a 5 ms
+
+O `TimedRobot` roda a cada **20 ms**, e a REVLib manda a tensão ao Spark a cada **20 ms por
+padrão**. Para mecanismos lentos isso basta. Para um mecanismo **rápido, leve ou com pouco atrito**
+(pulso, ponteiro, braço com pouca redução), 20 ms é atraso demais: o kD que seria necessário
+para amortecer vira vibração, e o mecanismo fica "mole" ou tremendo.
+
+**Sintomas de que o atraso está limitando:**
+- vibração em frequência fixa (na bancada, ~5–9 Hz) que aparece ao subir o kD;
+- um kD que funciona em passos pequenos, mas oscila depois de movimentos grandes;
+- filtrar mais a derivada **piora** (filtro = mais atraso);
+- não se consegue um kP/kD que seja ao mesmo tempo firme e sem tremor.
+
+**O que fazer (são DUAS coisas, e as duas são necessárias):**
+
+1. **Rodar a malha a 5 ms**, num callback separado do loop de 20 ms:
+   ```java
+   // Robot.java
+   addPeriodic(m_robotContainer::fastLoop, 0.005, 0.0025); // 200 Hz, deslocado do loop de 20 ms
+   ```
+   Os comandos continuam a 20 ms, mas só **definem o alvo**. Quem calcula perfil + FF + PID e
+   chama `setVoltage` é o `fastLoop`. Ele deve parar o motor sozinho se o robô for desabilitado
+   ou se nenhum comando renovar o pedido há ~100 ms.
+2. **Mandar a tensão ao motor no mesmo ritmo:**
+   ```java
+   motor.setControlFramePeriodMs(5); // padrão da REVLib: 20 ms
+   ```
+   **Sem isso, a malha de 5 ms é desperdiçada:** ela calcula, mas o Spark só recebe a cada 20 ms.
+   Foi exatamente o que aconteceu na bancada. Fizemos o loop de 5 ms, ele "quase não ajudou", e
+   só dias depois descobrimos que a tensão continuava saindo a 20 ms. Depois da correção, a
+   mesma configuração que oscilava ±10° ficou estável, com tremor de 0,005°.
+
+**Como diagnosticar:** grave a tensão aplicada (`getAppliedOutput() × getBusVoltage()`, ou o
+que o código manda) e o tempo real entre os ciclos (`getLoopDtMs` na bancada). Se a tensão
+"escada" a cada 20 ms enquanto a malha roda a 5 ms, o envio é o gargalo.
+
+**Cuidados:**
+- **Barramento CAN:** cada motor a 5 ms gera 4× mais mensagens. Para 1 ou 2 mecanismos críticos
+  tudo bem; não faça isso em todos os motores do robô. Acompanhe a utilização do CAN no Driver
+  Station.
+- **CPU da roboRIO:** a malha de 5 ms tem que ser leve (sem alocar objetos, sem logs pesados).
+  Confira se não aparece "loop overrun".
+- **Alternativa melhor quando o sensor está ligado no Spark:** malha **dentro do Spark**
+  (posição/MAXMotion a ~1 kHz, com feedforward pelo `arbFF` ou o `FeedForwardConfig`). Aí não
+  há atraso de CAN no controle. Na bancada não deu porque o encoder está na roboRIO.
+- Teste sempre com a validação robusta (seção 7): o atraso só se revela nos movimentos grandes.
+
+### 6.2 Os ganhos
+
 - **kP:** suba até começar a passar do alvo ou vibrar; volte um pouco.
 - **kD:** é o amortecimento, mas com atraso ele vira vibração (~8 Hz na bancada). Precisa de uma
   velocidade limpa (seção 2) e de pouco filtro: filtrar mais **aumentou** a vibração.
