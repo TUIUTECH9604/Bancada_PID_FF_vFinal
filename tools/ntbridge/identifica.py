@@ -37,7 +37,21 @@ def savgol(x, janela, deriv, dt):
     return np.convolve(x, coef[::-1], mode="same")
 
 
+def amostras_csv(path, t0=None, t1=None):
+    """CSV da simulação (MechanismSimCalibracaoTest: t,test,V,quadDeg,deg) — malha aberta."""
+    d = np.genfromtxt(path, delimiter=",", names=True)
+    t, V, quad, deg = d["t"], d["V"], d["quadDeg"], d["deg"]
+    sel = np.ones(len(t), bool)
+    if t0 is not None:
+        sel &= t >= t0
+    if t1 is not None:
+        sel &= t <= t1
+    return t, quad, deg, V, np.full(len(t), np.nan), sel
+
+
 def amostras(path, t0=None, t1=None):
+    if path.lower().endswith(".csv"):
+        return amostras_csv(path, t0, t1)
     s = read_wpilog(path, "Mech5ms/")
     tv = CFG.canal5ms(s, "deg")
     if tv is None:
@@ -65,7 +79,7 @@ def amostras(path, t0=None, t1=None):
     return t, pos, deg, volts, goal, sel
 
 
-def identifica(arquivos, t0=None, t1=None, vmin=20.0, janela=11, atraso_ms=None):
+def identifica(arquivos, t0=None, t1=None, vmin=20.0, janela=11, atraso_ms=None, aberta=False):
     X, Y, info = [], [], []
     for f in arquivos:
         r = amostras(f, t0, t1)
@@ -86,7 +100,8 @@ def identifica(arquivos, t0=None, t1=None, vmin=20.0, janela=11, atraso_ms=None)
             ok = np.zeros(b - a, bool)
             m = janela // 2
             ok[m:-m] = True
-            ok &= sel[a:b] & ~np.isnan(goal[a:b]) & (np.abs(v) >= vmin)
+            # aberta: malha aberta (SysId, kit), sem alvo de posição
+            ok &= sel[a:b] & (aberta | ~np.isnan(goal[a:b])) & (np.abs(v) >= vmin)
             info.append((t[a:b], v, ac, volts[a:b], deg[a:b], ok, dt))
     if not info:
         return None
@@ -137,10 +152,12 @@ if __name__ == "__main__":
     ap.add_argument("--ate", type=float)
     ap.add_argument("--atraso", type=float, default=None,
                     help="atraso do acionamento fixo (ms); sem ele, procura de 0 a 30 ms")
+    ap.add_argument("--aberta", action="store_true",
+                    help="malha aberta (SysId/kit): usa as amostras sem alvo de posição")
     ap.add_argument("--vmin", type=float, default=20.0,
                     help="só amostras andando mais rápido que isto (unidade/s); padrão 20")
     a = ap.parse_args()
-    r = identifica(a.arquivos, a.de, a.ate, a.vmin, atraso_ms=a.atraso)
+    r = identifica(a.arquivos, a.de, a.ate, a.vmin, atraso_ms=a.atraso, aberta=a.aberta)
     if r is None:
         sys.exit(1)
     v, e = r["valores"], r["erros"]

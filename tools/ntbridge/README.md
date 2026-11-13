@@ -89,6 +89,16 @@ Validado na bancada em 2026-11-13 (`aa_20261113`): recomendou ficar com os valor
 mesmos achados à mão (relatório no CLAUDE.md). O teste de parada na bateria e a 2ª volta vieram
 depois, a partir daquele resultado (a melhor nota foi a de kP mais alto) — falta uma rodada no robô.
 
+### Começar do ZERO (sem nenhum ganho)
+
+Se a configuração começar com kP = 0 (mecanismo novo), o assistente entra no **modo do zero**:
+pula a referência; o kit mede kS/kG/kV a partir de ONDE o mecanismo está (deixe um braço perto da
+horizontal e longe dos batentes) e faz pulsos curtos de aceleração; o `modelo` tira kV e kA dessa
+janela (malha aberta) e o LQR dá kP/kD; o kI de partida é kP/`VOLTA3_TI_S`; a bateria testa em
+ordem crescente e para na primeira que oscilar. Num mecanismo muito rápido (a bancada chega à
+velocidade final em ~6 ms) o kA não dá para medir com o log a 5 ms: o modelo usa um piso (tempo de
+resposta 10 ms) e avisa — o LQR muda pouco com isso.
+
 ### Usar num subsistema NOVO (o caminho para achar kG, kP, kI e kD)
 
 1. Código: o mecanismo usa o `MechanismSubsystem` com uma `MechanismConfig` própria (nome,

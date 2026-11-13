@@ -37,8 +37,10 @@ import java.util.Locale;
  * {@code tools/ntbridge/autoajuste.sh}): para depois das passadas lentas, publica kS/kG/kV em
  * /MechTune/Resultado/... e NÃO aplica nada ao vivo (quem decide é a bateria + uma pessoa).
  *
- * <p>Não mede kA nem mexe no perfil: o kA do SysId atrapalhou 3 vezes (lição 15); perfil e kA
- * são escolhidos com a bateria (`tools/ntbridge/bateria.sh`). O kS medido NÃO vai para o
+ * <p>Depois das passadas lentas, faz {@link #kPulses} pulsos curtos de aceleração (etapa ACELERA)
+ * para o PC medir o kA no log a 5 ms (identifica.py --aberta; o kit em si não calcula kA). O kA
+ * medido serve ao MODELO (LQR); como feedforward ele é decidido na bateria (o do SysId atrapalhou 3
+ * vezes, lição 15). Não mexe no perfil. O kS medido NÃO vai para o
  * feedforward de posição (lição 4): só aparece no relatório.
  */
 public class MechanismTuner extends Command {
@@ -69,7 +71,14 @@ public class MechanismTuner extends Command {
   /** Mensagens de depuração das passadas lentas no Riolog. */
   static boolean DEBUG = false;
 
-  private enum Phase { SENTIDO, VOLTA, CRAWL, GANHOS, CONCLUIDO, ABORTADO }
+  // ---- Pulsos de aceleração (kA, medido no PC pelo log a 5 ms: identifica.py --aberta) ----
+  private static final int kPulses = 4;
+  private static final double kPulseFracVolts = 0.8;   // pulso = 80% de kMaxVolts
+  private static final double kPulseMaxDegps = 300.0;  // corta a aceleração ao chegar nisto
+  private static final double kPulseTravelFrac = 0.3;  // ... ou ao andar 30% da faixa
+  private static final double kPulseMaxSec = 0.6;      // segurança de cada metade do pulso
+
+  private enum Phase { SENTIDO, VOLTA, CRAWL, ACELERA, GANHOS, CONCLUIDO, ABORTADO }
 
   private final MechanismSubsystem mech;
   private final MechanismConfig cfg;
@@ -106,6 +115,11 @@ public class MechanismTuner extends Command {
   private int crawlPass;
   private boolean sentidoOk;
   private double voltaFim = Double.NaN;
+  private int pulse;
+  private int pulseSign;
+  private boolean pulseDecel;
+  private double pulseStart;
+  private double pulseFrom;
   /** Início da passada atual (depois de frear), para descartar a aceleração. */
   private double passStart;        // 0..3: +lento, −lento, +rápido, −rápido
   private final List<double[]> samples = new ArrayList<>(); // {sinal, fatorGravidade, rpm, volts}
@@ -194,6 +208,7 @@ public class MechanismTuner extends Command {
       case SENTIDO -> sentido(now, rel);
       case VOLTA -> volta(now, rel);
       case CRAWL -> crawl(now, rel);
+      case ACELERA -> acelera(now, rel);
       case GANHOS -> ganhos(now, rel);
       default -> mech.tunerStop();
     }
@@ -253,11 +268,7 @@ public class MechanismTuner extends Command {
     if (crawlPass >= 4) {
       mech.tunerStop();
       if (!ajustaFeedforward()) return;
-      if (soFeedforward) {
-        concluirSoFF();
-        return;
-      }
-      iniciaGanhos(now);
+      iniciaAcelera(now);
       return;
     }
     int sentido = (crawlPass % 2 == 0) ? +1 : -1;
@@ -281,6 +292,62 @@ public class MechanismTuner extends Command {
       double deg = mech.getDeg();
       samples.add(new double[] {Math.signum(medida), cfg.gravity.factor(deg), medida / 6.0, v});
     }
+  }
+
+  /**
+   * Pulsos curtos de aceleração e frenagem dentro da faixa (para o PC medir o kA no log a 5 ms; as
+   * passadas lentas não têm aceleração). Cada pulso: kPulseFracVolts·kMaxVolts (+ gravidade
+   * medida) até kPulseMaxDegps ou kPulseTravelFrac da faixa, depois a mesma tensão ao contrário até
+   * parar, e freia. Sempre na direção do lado com mais espaço. Num mecanismo muito rápido (bancada
+   * 15:1: chega na velocidade final em ~6 ms, mais rápido que o laço) o kA quase não aparece: o
+   * assistente usa então um limite conservador e avisa.
+   */
+  private void iniciaAcelera(double now) {
+    pulse = 0;
+    pulseSign = 0;
+    goTo(Phase.ACELERA);
+    status("Pulsos de aceleração (kA)");
+  }
+
+  private void acelera(double now, double rel) {
+    if (braking(now)) return;
+    if (pulse >= kPulses) {
+      mech.tunerStop();
+      if (soFeedforward) {
+        concluirSoFF();
+      } else {
+        iniciaGanhos(now);
+      }
+      return;
+    }
+    double grav = resKg * cfg.gravity.factor(mech.getDeg());
+    double vp = kPulseFracVolts * kMaxVolts;
+    if (pulseSign == 0) { // começa um pulso, para o lado com mais espaço
+      pulseSign = (highRel - rel) >= (rel - lowRel) ? +1 : -1;
+      pulseDecel = false;
+      pulseStart = now;
+      pulseFrom = rel;
+    }
+    double t = now - pulseStart;
+    double vel = velocity();
+    if (!pulseDecel) {
+      double andou = Math.abs(rel - pulseFrom);
+      if (pulseSign * vel >= kPulseMaxDegps || andou >= kPulseTravelFrac * (highRel - lowRel)
+          || t > kPulseMaxSec) {
+        pulseDecel = true;
+        pulseStart = now;
+      } else {
+        mech.tunerVolts(MathUtil.clamp(grav + pulseSign * vp, -kMaxVolts, kMaxVolts));
+        return;
+      }
+    }
+    if (pulseSign * vel <= 0.0 || now - pulseStart > kPulseMaxSec) { // parou: freia e próximo
+      pulse++;
+      pulseSign = 0;
+      startBrake(now);
+      return;
+    }
+    mech.tunerVolts(MathUtil.clamp(grav - pulseSign * vp, -kMaxVolts, kMaxVolts));
   }
 
   /** Mínimos quadrados: V = kS·s + kG·f + kV·rpm (sem a coluna kG se não há gravidade). */
@@ -655,6 +722,10 @@ public class MechanismTuner extends Command {
   }
 
   // para testes
+  public double getResultKs() {
+    return resKs;
+  }
+
   public double getResultKg() {
     return resKg;
   }

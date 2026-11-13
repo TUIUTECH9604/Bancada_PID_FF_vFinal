@@ -69,37 +69,117 @@ def cmd_ff(pasta, arq):
     print("feedforward pelo kit:", " ".join(f"{k}={g(v)}" for k, v in e["ff"].items()))
 
 
+TAU_MIN_S = 0.010  # tempo de resposta mínimo crível (kA/kV): abaixo disso o log a 5 ms não vê
+
+
+def do_zero(e):
+    """Começando sem ganhos (mecanismo novo): kP de partida zero ou ausente."""
+    return not e.get("atual", {}).get("kP")
+
+
+def janela_kit(logs):
+    """(arquivo, t0, t1) do último trecho com RemoteCmd 11 (o kit) nos logs, ou None."""
+    from wpilog import read_wpilog
+    achou = None
+    for f in logs:
+        s = read_wpilog(f, "")
+        rc = CFG.ajuste(s, "RemoteCmd")
+        if rc is None:
+            continue
+        ini = None
+        for t, v in zip(*rc):
+            if v == 11 and ini is None:
+                ini = t
+            elif v != 11 and ini is not None:
+                achou = (f, float(ini), float(t))
+                ini = None
+    return achou
+
+
 def cmd_modelo(pasta, logs):
+    """kV e kA do mecanismo para o LQR. Com ganhos de partida: dos movimentos normais (robusto,
+    malha fechada: acelerações grandes). Do ZERO (sem ganhos, não há movimentos normais): da
+    janela do kit (passadas lentas + pulsos de aceleração, malha aberta).
+
+    O kA de um mecanismo muito rápido sai SUBESTIMADO (a derivada a 5 ms não vê a aceleração: na
+    simulação da bancada, kA verdadeiro 0,00003 → identificado 0,000007). Por isso, se kA/kV
+    (o tempo de resposta) sair abaixo de TAU_MIN_S, usa kA = kV·TAU_MIN_S e AVISA."""
     import identifica
     import ganhos
     e = carrega_estado(pasta)
     atraso = float(CFG.extra.get("ATRASO_MS", 10.0))
-    r = identifica.identifica(logs, atraso_ms=atraso)
+    r, fonte = None, ""
+    if not do_zero(e):
+        r = identifica.identifica(logs, atraso_ms=atraso)
+        fonte = "movimentos normais (malha fechada)"
+    if r is None:
+        if logs and logs[0].lower().endswith(".csv"):  # CSV da simulação: o arquivo todo é o kit
+            f, t0, t1 = logs[0], None, None
+        else:
+            jk = janela_kit(logs)
+            if jk is None:
+                sys.exit("sem dados para identificar: rode a etapa 'ff' (kit) antes, com o log no "
+                         "pendrive")
+            f, t0, t1 = jk
+        # Malha aberta (kit: passadas lentas + pulsos curtos). kS/kG/kV SEM compensar atraso (a
+        # parte robusta: na simulação calibrada 0,11/0,053/0,032 contra 0,114/0,052/0,0318); o kA
+        # com o atraso do acionamento — em mecanismo rápido ele sai ruim de qualquer jeito (pulsos
+        # mais curtos que a derivada suavizada), e o piso TAU_MIN_S abaixo segura.
+        r = identifica.identifica([f], t0, t1, atraso_ms=0.0, aberta=True)
+        ra = identifica.identifica([f], t0, t1, atraso_ms=atraso, aberta=True)
+        if r is not None and ra is not None:
+            r["valores"]["kA"] = ra["valores"]["kA"]
+        fonte = "kit (malha aberta)" + (f", {t1 - t0:.0f} s" if t0 is not None else "")
     if r is None:
         sys.exit("sem dados a 5 ms para identificar")
     v = r["valores"]
-    if v["kV"] <= 0 or v["kA"] <= 0:
-        sys.exit(f"identificação sem sentido físico (kV {v['kV']:g}, kA {v['kA']:g}): não sigo")
-    s = ganhos.sugestao(v["kV"], v["kA"], CFG)
-    e["modelo"] = dict(kV=v["kV"], kA=v["kA"], kG_log=v.get("kG", float("nan")),
-                       kS_log=v["kS"], r2=r["r2"], n=r["n"], kP=s["kP"], kD=s["kD"],
+    if v["kV"] <= 0:
+        sys.exit(f"identificação sem sentido físico (kV {v['kV']:g}): não sigo")
+    ka, aviso_ka = v["kA"], ""
+    tau = ka / v["kV"] if ka > 0 else 0.0
+    if tau < TAU_MIN_S:
+        ka = v["kV"] * TAU_MIN_S
+        aviso_ka = (f"kA medido {v['kA']:.3g} (tempo de resposta {tau * 1000:.1f} ms) é rápido demais "
+                    f"para o log a 5 ms medir: usei kA = kV × {TAU_MIN_S * 1000:.0f} ms = {ka:.3g}")
+        print("AVISO:", aviso_ka)
+    elif tau < 0.05:
+        aviso_ka = (f"tempo de resposta {tau * 1000:.0f} ms (kA {ka:.3g}): mecanismo rápido, kA pouco "
+                    "confiável (pode estar 2–4× errado); o LQR muda pouco e a bateria em volta cobre")
+        print("AVISO:", aviso_ka)
+    s = ganhos.sugestao(v["kV"], ka, CFG)
+    e["modelo"] = dict(kV=v["kV"], kA=ka, kA_medido=v["kA"], aviso_kA=aviso_ka, fonte=fonte,
+                       kG_log=v.get("kG", float("nan")), kS_log=v["kS"], r2=r["r2"], n=r["n"],
+                       kP=s["kP"], kD=s["kD"],
                        criterios=dict(tol_pos=s["tol_pos"], tol_vel=s["tol_vel"], umax=s["umax"],
                                       atraso_ms=s["atraso_ms"]))
     salva_estado(pasta, e)
-    print(f"modelo: kV {v['kV']:.6g} V/({CFG.UNIDADE}/s), kA {v['kA']:.6g} (R² {r['r2']:.3f}) → "
-          f"LQR kP {s['kP']:.5f}, kD {s['kD']:.7f}")
+    print(f"modelo ({fonte}): kV {v['kV']:.6g} V/({CFG.UNIDADE}/s), kA {ka:.6g} (R² {r['r2']:.3f})"
+          f" → LQR kP {s['kP']:.5f}, kD {s['kD']:.7f}")
 
 
 def cmd_campanha(pasta):
     e = carrega_estado(pasta)
     at, mo, ff = e.get("atual", {}), e.get("modelo"), e.get("ff", {})
-    if not at or not mo:
-        sys.exit("falta 'atual' ou 'modelo' no estado.json")
+    if not mo:
+        sys.exit("falta o 'modelo' no estado.json")
+    zero = do_zero(e)
     base = {k: at[k] for k in CHAVES if k in at and k not in ("kS", "VelkV")}
-    # kI acompanha o kP na mesma proporção de hoje (o LQR não dá kI)
-    razao_i = at.get("kI", 0.0) / at["kP"] if at.get("kP") else 0.0
-    nomes, muda = ["atual"], [""]
-    cands = {"atual": dict(params=dict(base), fp=None, extra="")}
+    ti = float(CFG.extra.get("VOLTA3_TI_S", 0.3))
+    if zero:
+        # Do ZERO: o feedforward vem das MEDIDAS (kit e modelo), não dos zeros da configuração
+        kg_ff = ff.get("kG", float("nan"))
+        if CFG.GRAVIDADE != "NONE":
+            base["kG"] = max(0.0, kg_ff if np.isfinite(kg_ff) else mo.get("kG_log", 0.0))
+        base["kA"] = mo["kA"]
+        base["VelkV"] = mo["kV"] * 6.0 if CFG.CIRCULAR else mo["kV"]  # V/RPM do mecanismo
+        razao_i = 1.0 / ti  # kI = kP / Ti (o integral corrige um erro parado em ~Ti)
+    else:
+        # kI acompanha o kP na mesma proporção de hoje (o LQR não dá kI)
+        razao_i = at.get("kI", 0.0) / at["kP"]
+    nomes, muda, cands = [], [], {}
+    if not zero:
+        nomes, muda = ["atual"], [""]
+        cands["atual"] = dict(params=dict(base), fp=None, extra="")
 
     def cand(nome, fp, fd=1.0, extra=""):
         kp = mo["kP"] * fp
@@ -111,18 +191,22 @@ def cmd_campanha(pasta):
 
     kg_ff = ff.get("kG", float("nan"))
     extra_kg = ""
-    if CFG.GRAVIDADE != "NONE" and np.isfinite(kg_ff) and kg_ff > 0 and at.get("kG"):
-        if abs(kg_ff - at["kG"]) > 0.15 * at["kG"]:
-            extra_kg = f"kG={g(kg_ff)}"  # o kG do kit difere >15% do atual: testa junto
-    cand("modelo", 1.0)
-    cand("mod07", 0.7)
+    if (not zero and CFG.GRAVIDADE != "NONE" and np.isfinite(kg_ff) and kg_ff > 0
+            and at.get("kG") and abs(kg_ff - at["kG"]) > 0.15 * at["kG"]):
+        extra_kg = f"kG={g(kg_ff)}"  # o kG do kit difere >15% do atual: testa junto
+    if zero:  # do zero: em ordem CRESCENTE (a bateria para na 1ª que oscilar)
+        cand("mod07", 0.7)
+        cand("modelo", 1.0)
+    else:
+        cand("modelo", 1.0)
+        cand("mod07", 0.7)
     cand("mod14", 1.4)
     if extra_kg:
         cand("modeloG", 1.0, extra=extra_kg)
-    e["base"], e["razao_i"], e["cands"] = base, razao_i, cands
-    registra_volta(e, "1ª volta", "atual", nomes)
+    e["base"], e["razao_i"], e["cands"], e["do_zero"] = base, razao_i, cands, zero
+    registra_volta(e, "1ª volta", "modelo" if zero else "atual", nomes)
     salva_estado(pasta, e)
-    escreve_campanha(os.path.join(pasta, "campanha_auto.sh"), base, nomes, muda, mo, 0)
+    escreve_campanha(os.path.join(pasta, "campanha_auto.sh"), base, nomes, muda, mo, 1 if zero else 0)
 
 
 def registra_volta(e, nome, ref, nomes):
@@ -364,6 +448,9 @@ def origem_dos_ganhos(e, nome):
                  if ff and abs(p.get("kG", 0) - ff.get("kG", -1)) < 1e-9 else
                  f"o de partida (o kit mediu {g(ff.get('kG', np.nan))}; ficou dentro do ruído)"
                  if ff else "o de partida (kit não rodou)"))
+    if e.get("do_zero"):
+        L.append(f"- Partiu do ZERO (sem ganhos): kG, kV e kA vieram das MEDIDAS ({mo.get('fonte', '?')}),"
+                 " o kI de kP/VOLTA3_TI_S.")
     kv_log = mo.get("kV", np.nan)
     kv_txt = (f"{g(kv_log * 6)} V/RPM" if CFG.CIRCULAR else f"{g(kv_log)} V/({CFG.UNIDADE}/s)")
     L.append(f"- kV {g(at.get('VelkV', np.nan))} V/RPM e kA {g(p.get('kA', np.nan))}: de partida; o "
@@ -481,7 +568,8 @@ def cmd_relatorio(pasta, logs):
           f" (= {g(kv_rpm)} V/RPM), kA {g(mo.get('kA', np.nan))} V/({CFG.UNIDADE}/s²), "
           f"R² {mo.get('r2', np.nan):.3f}" if mo else "- Modelo: não rodou",
           f"- Ganhos do modelo (LQR, {mo.get('criterios')}): kP {g(mo.get('kP', np.nan))}, "
-          f"kD {g(mo.get('kD', np.nan))}" if mo else "", "",
+          f"kD {g(mo.get('kD', np.nan))}" if mo else "",
+          f"- ⚠️ {mo['aviso_kA']}" if mo.get("aviso_kA") else "", "",
           "## Voltas (log a 5 ms; nota menor = melhor; cada volta comparada com a SUA referência)",
           "",
           f"Pesos da nota (NOTA_PESOS): {' '.join(f'{k}={v:g}' for k, v in pontua.P.items())}. "

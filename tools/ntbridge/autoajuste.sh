@@ -32,6 +32,10 @@ baixa_log() {
   scp -q "${SSH_OPTS[@]}" "lvuser@$IP:$f" "logs/$(basename "$f")" < /dev/null || return 1
   echo "logs/$(basename "$f")"
 }
+# Começando do ZERO (mecanismo novo, kP de partida 0)? (lê o estado.json)
+do_zero() {
+  python -c "import json,sys; e=json.load(open('$PASTA/estado.json',encoding='utf-8')); sys.exit(0 if not e.get('atual',{}).get('kP') else 1)" 2>/dev/null
+}
 le_atual() {
   local a=(); for k in $CH; do a+=("$TUN/$k"); done
   ./nt.sh get "${a[@]}" > "$PASTA/atual.txt"
@@ -44,15 +48,24 @@ for etapa in $ETAPAS; do
     ref)
       habilitado ref
       le_atual
-      for r in 1 2; do ./robusto.sh "$PASTA/ref_r$r.csv" | tail -1; done
+      if do_zero; then
+        echo "sem ganhos de partida (kP 0): modo DO ZERO — pulo a referência (o mecanismo não segue alvos)"
+      else
+        for r in 1 2; do ./robusto.sh "$PASTA/ref_r$r.csv" | tail -1; done
+      fi
       ;;
     ff)
       habilitado ff
       [ -f "$PASTA/estado.json" ] || le_atual
       ini="${FF_INICIO:-$INICIO}"
-      echo "indo para $ini (início das passadas lentas, ±40° em volta)..."
-      ./nt.sh setm $TUN/TestSetpointDeg "$ini" $TUN/RemoteCmd 7 >/dev/null
-      python -c "import time;time.sleep(3)"
+      if do_zero; then
+        echo "modo DO ZERO: sem kP o mecanismo não vai sozinho até $ini — o kit começa de ONDE ESTÁ"
+        echo "(±40° em volta; para braço, deixe perto da horizontal, longe dos batentes)"
+      else
+        echo "indo para $ini (início das passadas lentas, ±40° em volta)..."
+        ./nt.sh setm $TUN/TestSetpointDeg "$ini" $TUN/RemoteCmd 7 >/dev/null
+        python -c "import time;time.sleep(3)"
+      fi
       ./nt.sh setm $TUN/RemoteCmd 0 $TUN/MechTuneSoFF 1 >/dev/null
       ./nt.sh set $TUN/RemoteCmd 11 >/dev/null
       fim=""

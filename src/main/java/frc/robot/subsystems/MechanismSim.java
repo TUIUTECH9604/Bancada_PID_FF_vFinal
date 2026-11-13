@@ -40,14 +40,19 @@ class MechanismSim {
   private static final double kTorquePerVolt = 2.6 / 12.0;
   /** Redução motor → ponteiro (3:1 × 5:1 + 90° 1:1, desde 2026-11-11). */
   private static final double kGearing = 15.0;
-  private static final double kJ = 0.000722;
+  // 2026-11-13, pelo SysId com a 15:1 (log a 5 ms, quadratura): kA ≈ 0,00002–0,00005 V/(°/s²).
+  // kA = J·R/(Kt·N)·π/180 = J·0,00537 → J ≈ 0,0056 kg·m² para kA 0,00003 (eixo novo + caixa +
+  // rotor do NEO ×15²; o 0,000722 era o ponteiro SEM redução).
+  private static final double kJ = 0.0056;
   // Volts NO MOTOR. 15:1: 0,063 medido em 2026-11-11 (era 0,692 sem redução, 0,362 sem o peso)
-  private static final double kBancadaKgVolts = 0.063;
+  // 2026-11-13: SysId 15:1 deu 0,044, o kit (passadas lentas) 0,059–0,061 → 0,052
+  private static final double kBancadaKgVolts = 0.052;
   /** Só para testes: kG da física (V no motor); 0 = sem gravidade (giratório na horizontal). */
   static double testKgVolts = Double.NaN;
   /** kG da física desta simulação (V no motor). */
   private final double kGVolts;
-  private static final double kSVolts = 0.077;
+  // 2026-11-13: SysId 15:1 (log a 5 ms) 0,114 V; o kit 0,118–0,121 (era 0,077 sem a caixa)
+  private static final double kSVolts = 0.114;
   /** Atrito para começar a mover parado (V). Solto, o ponteiro real parava a ±1° de 270°. */
   private static final double kStaticVolts = 0.01;
   /** Atrito mecânico em movimento com o motor solto (V equivalentes). */
@@ -56,7 +61,9 @@ class MechanismSim {
   private static final double kViscousVoltsPerRpm = 0.0001;
   /** Atraso entre o controle mandar a tensão e o motor aplicar (s). */
   private static final double kActuatorDelaySec = 0.010;
-  private static final double kFreeSpeedRpm = 12.0 / 0.00247;
+  // Velocidade livre do MOTOR: kV real com a 15:1 = 0,0318 V/RPM do ponteiro (SysId 2026-11-13,
+  // 0,03177) → 12/0,0318 × 15 ≈ 5660 RPM (o NEO de fábrica: 5676). Era 12/0,00247 (sem redução).
+  private static final double kFreeSpeedRpm = 12.0 / 0.0318 * kGearing;
 
   /**
    * Só para testes: batentes físicos simulados {mínimo, máximo} em graus no referencial contínuo do

@@ -368,6 +368,25 @@ em velocidade normal é ~0,032). Próximo (na simulação, sem robô): **modo do
 kit mede kS/kG/kV + etapa nova de acelerações curtas (kA) dentro de ±40°, a malha de velocidade do
 kit pelo kV medido, campanha a partir do FF medido + LQR + kI = kP/0,3 s, pular o `ref` sem ganhos;
 validar na bancada zerando tudo (resposta conhecida: kG ≈ 0,09, kP 0,006, kI 0,02, kD baixo).
+**Simulação calibrada pela 15:1 e MODO DO ZERO (2026-11-13 noite, só simulação — falta deploy e
+teste no robô).** `MechanismSim`: J 0,0056 kg·m² (era 0,000722, ponteiro sem redução), kS 0,114,
+kG 0,052, motor livre 12/0,0318×15 ≈ 5660 RPM (era 4858) → `MechanismSimCalibracaoTest` (os
+degraus/rampas do SysId na simulação, `build/sim_sysid.csv`): kV 0,03182 (real 0,03177), kS 0,107,
+kG 0,053. SEM a folga de 5,6° ainda (a simulação passa menos do alvo que o real: próximo passo).
+**kA não é mensurável num mecanismo rápido**: a bancada chega à velocidade final em ~6 ms; com a
+derivada suavizada de 5 ms o kA sai 2–4× errado em qualquer teste (na simulação, verdadeiro 0,00003
+→ identificado 0,000007 a 0,00014). Regra: `autoajuste.py modelo` usa kA = max(medido, kV × 10 ms)
+e avisa abaixo de 50 ms (o LQR muda pouco: kA 0,00001–0,00005 → kP 0,0080–0,0065).
+Kit: etapa nova **ACELERA** (4 pulsos de 80% de 3 V dentro da faixa, cortados a 300°/s ou 30% da
+faixa, frenagem com a tensão ao contrário) — dá velocidade alta para o kV (só as passadas lentas
+dão kV 4× baixo no robô real: 0,008 V/RPM). `identifica.py --aberta` (sem alvo de posição) e
+`--csv` (CSV da simulação). **Modo do zero** (`kP` de partida 0): `ref` pulado, o kit começa de
+ONDE o mecanismo está, `modelo` identifica pela janela do kit (kS/kG/kV sem atraso, kA com atraso
++ piso), a campanha usa o FF MEDIDO (kG do kit, VelkV e kA do modelo) e kI = kP/`VOLTA3_TI_S`,
+candidatas em ordem crescente com `PARA_SE_ABORTAR=1`. `MechanismTunerZeroSimTest`: kit com TUDO
+zero → kS 0,117, kG 0,052, kV 0,030; o PC → LQR kP 0,0067, kI 0,022, kD 0,000016, campanha
+kP 0,0047/0,0067/0,0094 (as mesmas que funcionaram no robô). **Validar na bancada**: deploy (o kit
+mudou), zerar kP/kI/kD/kG/VelkV/kA ao vivo, ponteiro perto de 0°, `autoajuste.sh` completo.
 **3ª volta no robô (2026-11-13 ~17:20, log `FRC_20261113_200047`) e O MECANISMO MUDOU:** com os
 MESMOS ganhos (atual), a passada foi de 1,0–1,3° (manhã; 16:35 ainda 1,4°) para **3,5–3,8°** (pior
 caso 75>90 de 5,0° para 7,1–7,5°), bateria 11,4–11,8 V, motor 25 °C → mecânica (folga/algo
