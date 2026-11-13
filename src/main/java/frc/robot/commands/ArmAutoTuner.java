@@ -7,7 +7,8 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StringPublisher;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
-import frc.robot.subsystems.DialSubsystem;
+import frc.robot.subsystems.MechanismSubsystem;
+import frc.robot.util.TunableNumber;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -31,11 +32,14 @@ import java.util.List;
  *                  ≤ 0,6°. Depois religa o kI (com zona morta) e confere segurando 60°.
  *                  O kS medido NÃO é usado no modo posição (faz vibrar): fica 0.
  *
+ * <p>Com /Tuning/Dial/AutoTuneSoKgKs = 1 (padrão), para depois da etapa 2: mede só kG e kS
+ * (ex.: depois de mudar o peso do ponteiro). As etapas 3 e 4 só rodam com 0.
+ *
  * <p>Ao terminar, os ganhos são aplicados na hora (aparecem em /Tuning/Dial/ no Elastic) e o
  * resumo fica em /AutoTune/... e no Riolog. Para guardar de vez, copie para os padrões do código.
  * Requer TunableNumber.TUNING_ENABLED = true.
  */
-public class DialAutoTuner extends Command {
+public class ArmAutoTuner extends Command {
 
   // ===================== Limites de segurança =====================
   private static final double kRampMinVps = 0.04;      // V/s nas rampas: mínimo (ponteiro leve)
@@ -43,7 +47,7 @@ public class DialAutoTuner extends Command {
   private static final double kRampDownVps = 0.3;      // V/s ao soltar o ponteiro de volta
   private static final double kMaxRampVolts = 3.0;     // se não subir até aqui, aborta
   private static final double kMaxSafeRpm = 400.0;     // acima disso, aborta
-  private static final double kMaxCurrentA = 18.0;     // por mais de 0,3 s, aborta
+  private static final double kMaxCurrentA = 18.0;     // por mais de 0,3 s, aborta (logo abaixo dos 20 A do Spark: cravado nele = preso)
   private static final double kQuasiStaticRpm = 15.0;  // "quase parado" nas rampas
   private static final double kMaxSlipRpm = 30.0;      // motor × ponteiro por mais de 0,3 s, aborta
   private static final double kMaxSpinRpm = 250.0;     // teste de velocidade só se a previsão ficar abaixo
@@ -70,7 +74,14 @@ public class DialAutoTuner extends Command {
     VEL_V1, VEL_V2, VEL_REFINO, VEL_KP, PARAR_GIRO, POS_KP, CONCLUIDO, ABORTADO
   }
 
-  private final DialSubsystem dial;
+  private final MechanismSubsystem mech;
+
+  /**
+   * 1 = para depois de medir kG e kS (as rampas). A busca de kP/kD daqui está desatualizada
+   * (kD = 0,04·kP, sem o teste robusto) e trocaria os ganhos validados; use o robusto.sh para eles.
+   * 0 = autoajuste completo, como antes.
+   */
+  private final TunableNumber soKgKs = new TunableNumber("Dial/AutoTuneSoKgKs", 1.0);
 
   private Phase phase;
   private double phaseStart;
@@ -83,6 +94,9 @@ public class DialAutoTuner extends Command {
   // Rampas quase-estáticas: {sinal do movimento, cos θ, tensão}
   private final List<double[]> samples = new ArrayList<>();
   private double rampVolts;
+  /** Quanto o ponteiro andou desde o início da rampa atual (contínuo, para o sentido errado). */
+  private double rampTravelDeg;
+  private double rampLastDeg;
 
   // Velocidade: média pela distância percorrida (encoder do NEO, contínuo)
   private double v1, v2, rpm1, rpm2;
@@ -119,9 +133,9 @@ public class DialAutoTuner extends Command {
   private final DoublePublisher kPPub = nt.getDoubleTopic("Resultado/kP").publish();
   private final DoublePublisher kDPub = nt.getDoubleTopic("Resultado/kD").publish();
 
-  public DialAutoTuner(DialSubsystem dial) {
-    this.dial = dial;
-    addRequirements(dial);
+  public ArmAutoTuner(MechanismSubsystem mech) {
+    this.mech = mech;
+    addRequirements(mech);
     setName("Autoajuste");
   }
 
@@ -144,8 +158,8 @@ public class DialAutoTuner extends Command {
   public void execute() {
     double now = Timer.getFPGATimestamp();
     double t = now - phaseStart;
-    double deg = dial.getDeg();
-    double rpm = dial.getVelRpm();
+    double deg = mech.getDeg();
+    double rpm = mech.getVelRpm();
 
     if (safetyTripped(now, rpm)) return;
 
@@ -161,7 +175,7 @@ public class DialAutoTuner extends Command {
       case VEL_KP -> buscaVelKp(t, rpm);
       case PARAR_GIRO -> pararGiro(t, rpm);
       case POS_KP -> buscaPosKp(now, deg);
-      default -> dial.tunerStop();
+      default -> mech.tunerStop();
     }
   }
 
@@ -172,15 +186,15 @@ public class DialAutoTuner extends Command {
 
   @Override
   public void end(boolean interrupted) {
-    dial.tunerStop();
+    mech.tunerStop();
     if (velOutMaxChanged) {
-      dial.setVelOutMax(origVelOutMax);
+      mech.setVelOutMax(origVelOutMax);
     }
     if (kiChanged) {
       // interrompido no meio da busca: volta aos ganhos de antes, não ao candidato da vez
-      dial.setKP(origKP);
-      dial.setKD(origKD);
-      dial.setKI(origKI);
+      mech.setKP(origKP);
+      mech.setKD(origKD);
+      mech.setKI(origKI);
     }
     if (interrupted) {
       status("Interrompido (Disable ou outro comando) na etapa " + phase.name());
@@ -191,9 +205,9 @@ public class DialAutoTuner extends Command {
   // ===================== Etapas =====================
 
   private void assentar(double t, double deg, double rpm) {
-    dial.tunerStop();
+    mech.tunerStop();
     if (t > 2.5 && Math.abs(rpm) < 3.0) {
-      if (!dial.tunerCheckHanging()) {
+      if (!mech.tunerCheckHanging()) {
         abort(String.format("ponteiro pendurado lendo %.1f° (esperado 270°). Calibre o zero com o "
             + "botão Y (pendurado e parado) e copie kAbsZeroOffsetDeg para o código", deg));
         return;
@@ -212,8 +226,19 @@ public class DialAutoTuner extends Command {
   private void rampa(int sentido, double deg, double rpm) {
     double a = MathUtil.inputModulus(deg, 0.0, 360.0);
 
-    // Foi para o lado errado? (tensão positiva tem que levar o ângulo para cima de 270°)
-    boolean ladoErrado = sentido > 0 ? (a > 180.0 && a < 255.0) : (a > 285.0 && a < 359.0);
+    // Foi para o lado errado? Compara com onde a rampa COMEÇOU (tensão positiva = ângulo subindo).
+    // Antes comparava com faixas fixas em volta de 270°, o que supunha o ponteiro caindo sozinho de
+    // volta a 270° entre as rampas; com a redução 15:1 ele pode ficar parado lá em cima (~345°)
+    // e a rampa negativa abortaria logo no início.
+    // O deslocamento é SOMADO passo a passo: a diferença direta com o início "pelo caminho mais
+    // curto" vira o lado contrário depois de meia volta (abortou assim em 2026-11-11, 15° → 193°).
+    if (rampVolts == 0.0) {
+      rampTravelDeg = 0.0; // 1º passo da rampa
+    } else {
+      rampTravelDeg += MathUtil.inputModulus(a - rampLastDeg, -180.0, 180.0);
+    }
+    rampLastDeg = a;
+    boolean ladoErrado = sentido * rampTravelDeg < -5.0;
     if (ladoErrado) {
       abort("o ângulo andou para o lado contrário da tensão. Se o ponteiro girou ANTI-HORÁRIO "
           + "com tensão positiva, troque kAbsInverted; se girou HORÁRIO, troque kInverted");
@@ -223,11 +248,15 @@ public class DialAutoTuner extends Command {
     double kgEst = Math.abs(rampVolts) / Math.max(0.17, Math.abs(Math.cos(Math.toRadians(a))));
     double rate = MathUtil.clamp(0.25 * kgEst, kRampMinVps, kRampMaxVps);
     rampVolts += sentido * rate * 0.02;
-    dial.tunerVolts(rampVolts);
+    mech.tunerVolts(rampVolts);
 
     boolean faixa = sentido > 0 ? (a > 280.0 && a < 350.0) : (a > 190.0 && a < 260.0);
     if (faixa && Math.abs(rpm) < kQuasiStaticRpm) {
-      samples.add(new double[] {sentido, Math.cos(Math.toRadians(a)), rampVolts});
+      // Desconta a parte da tensão que vai para a velocidade (kV·v): com a redução 15:1 o kV é 15×
+      // maior e, a 10 RPM do ponteiro, isso já são ~0,3 V. Sem descontar, o kG saía 0,234 V em vez
+      // de 0,063 V (2026-11-11).
+      samples.add(new double[] {sentido, Math.cos(Math.toRadians(a)),
+          rampVolts - mech.getVelKV() * rpm});
     }
 
     boolean chegou = sentido > 0 ? (a >= 345.0 && a < 359.0) : (a <= 195.0 && a > 181.0);
@@ -249,12 +278,17 @@ public class DialAutoTuner extends Command {
     if (rampVolts != 0.0) {
       double passo = kRampDownVps * 0.02;
       rampVolts = Math.abs(rampVolts) <= passo ? 0.0 : rampVolts - Math.signum(rampVolts) * passo;
-      dial.tunerVolts(rampVolts);
+      mech.tunerVolts(rampVolts);
       phaseStart = Timer.getFPGATimestamp(); // o tempo de descanso só conta depois
       return;
     }
-    dial.tunerStop();
+    mech.tunerStop();
     if ((t > 3.0 && Math.abs(rpm) < 3.0) || t > 10.0) {
+      if (proxima == Phase.VEL_V1 && soKgKs.get() > 0.5) {
+        log("Só kG/kS (/Tuning/Dial/AutoTuneSoKgKs = 1): velocidade e kP/kD não foram mexidos");
+        concluir();
+        return;
+      }
       if (proxima == Phase.VEL_V1) {
         iniciarVelocidadeOuPular();
         return;
@@ -293,10 +327,10 @@ public class DialAutoTuner extends Command {
     }
     resKG = kg;
     resKS = MathUtil.clamp(ks, 0.0, 0.5);
-    dial.setKG(resKG);
+    mech.setKG(resKG);
     // kS no modo posição troca de sinal a cada cruzamento do alvo e faz o ponteiro vibrar
     // (medido na bancada). Fica 0; o kI com zona morta vence o atrito parado.
-    dial.setKS(0.0);
+    mech.setKS(0.0);
     log(String.format("kG = %.3f V, kS medido = %.3f V (%d amostras; kS de posição = 0)",
         resKG, resKS, samples.size()));
   }
@@ -307,11 +341,11 @@ public class DialAutoTuner extends Command {
    * no eixo quase não muda com o peso; os valores atuais continuam valendo).
    */
   private void iniciarVelocidadeOuPular() {
-    double kg = Double.isNaN(resKG) ? dial.getKG() : resKG;
+    double kg = Double.isNaN(resKG) ? mech.getKG() : resKG;
     v1 = Math.max(0.3, 2.0 * kg);
     v2 = 1.6 * v1;
-    double kv = Math.max(1e-4, dial.getVelKV());
-    double rpmPrevisto = (v2 - dial.getVelKS()) / kv;
+    double kv = Math.max(1e-4, mech.getVelKV());
+    double rpmPrevisto = (v2 - mech.getVelKS()) / kv;
     if (rpmPrevisto > kMaxSpinRpm) {
       log(String.format("Velocidade PULADA: com kG = %.2f V precisaria de ~%.0f RPM em malha aberta "
           + "(limite %.0f). Mantendo VelkS/VelkV/VelkP atuais.", kg, rpmPrevisto, kMaxSpinRpm));
@@ -325,8 +359,8 @@ public class DialAutoTuner extends Command {
   /** Malha aberta: mede o RPM médio pela distância percorrida entre 1,5 s e 5 s. */
   private void malhaAberta(double t, double now, boolean primeira) {
     double volts = primeira ? v1 : v2;
-    dial.tunerVolts(volts);
-    double cont = dial.getContinuousDeg();
+    mech.tunerVolts(volts);
+    double cont = mech.getContinuousDeg();
 
     if (!windowStarted && t >= 1.5) {
       windowStarted = true;
@@ -352,9 +386,9 @@ public class DialAutoTuner extends Command {
         }
         resVelKV = (v2 - v1) / (rpm2 - rpm1);
         resVelKS = MathUtil.clamp(v1 - resVelKV * rpm1, 0.0, 0.3);
-        dial.setVelKV(resVelKV);
-        dial.setVelKS(resVelKS);
-        dial.setVelKP(0.0);
+        mech.setVelKV(resVelKV);
+        mech.setVelKS(resVelKS);
+        mech.setVelKP(0.0);
         log(String.format("Dois pontos: VelkV = %.5f V/RPM, VelkS = %.3f V", resVelKV, resVelKS));
         goTo(Phase.VEL_REFINO);
       }
@@ -363,8 +397,8 @@ public class DialAutoTuner extends Command {
 
   /** Só FF a 120 RPM: o erro médio que sobrar é corrigido no VelkS. */
   private void refinoVelocidade(double t, double now) {
-    dial.tunerVelocity(kVelTargetRpm);
-    double cont = dial.getContinuousDeg();
+    mech.tunerVelocity(kVelTargetRpm);
+    double cont = mech.getContinuousDeg();
     if (!windowStarted && t >= 1.5) {
       windowStarted = true;
       windowStartDeg = cont;
@@ -374,11 +408,11 @@ public class DialAutoTuner extends Command {
       double media = (cont - windowStartDeg) / 360.0 / (now - windowStartTime) * 60.0;
       double erro = kVelTargetRpm - media;
       resVelKS = MathUtil.clamp(resVelKS + resVelKV * erro, 0.0, 0.3);
-      dial.setVelKS(resVelKS);
+      mech.setVelKS(resVelKS);
       log(String.format("Refino: média %.1f RPM (alvo %.0f) → VelkS = %.3f V", media, kVelTargetRpm, resVelKS));
 
-      origVelOutMax = dial.getVelOutMax();
-      dial.setVelOutMax(kVelSearchOutMax);
+      origVelOutMax = mech.getVelOutMax();
+      mech.setVelOutMax(kVelSearchOutMax);
       velOutMaxChanged = true;
       velKpIndex = 0;
       bestVelStd = Double.POSITIVE_INFINITY;
@@ -389,13 +423,13 @@ public class DialAutoTuner extends Command {
   }
 
   private void startVelTrial() {
-    dial.setVelKP(kVelKpCandidates[velKpIndex]);
+    mech.setVelKP(kVelKpCandidates[velKpIndex]);
     errSum = errSumSq = 0.0;
     errN = 0;
   }
 
   private void buscaVelKp(double t, double rpm) {
-    dial.tunerVelocity(kVelTargetRpm);
+    mech.tunerVelocity(kVelTargetRpm);
     double kp = kVelKpCandidates[velKpIndex];
 
     if (t > 0.5 && (rpm < -10.0 || rpm > 2.2 * kVelTargetRpm)) {
@@ -433,15 +467,15 @@ public class DialAutoTuner extends Command {
 
   private void encerrarBuscaVel() {
     resVelKP = bestVelKp;
-    dial.setVelKP(resVelKP);
-    dial.setVelOutMax(origVelOutMax);
+    mech.setVelKP(resVelKP);
+    mech.setVelOutMax(origVelOutMax);
     velOutMaxChanged = false;
     log(String.format("VelkP escolhido = %.5f (desvio %.1f RPM)", resVelKP, bestVelStd));
     goTo(Phase.PARAR_GIRO);
   }
 
   private void pararGiro(double t, double rpm) {
-    dial.tunerStop();
+    mech.tunerStop();
     if (t > 2.0 && Math.abs(rpm) < 3.0) {
       iniciarBuscaPos();
     } else if (t > 15.0) {
@@ -454,24 +488,24 @@ public class DialAutoTuner extends Command {
   private void iniciarBuscaPos() {
     log(String.format("Degraus COM perfil entre %.0f° e %.0f° (kD = %.2f·kP, kI desligado)",
         kPosTargetADeg, kPosTargetBDeg, kKdRatio));
-    origKP = dial.getKP();
-    origKD = dial.getKD();
-    origKI = dial.getKI();
-    dial.setKI(0.0); // a integral mascararia o amortecimento; volta no teste final
+    origKP = mech.getKP();
+    origKD = mech.getKD();
+    origKI = mech.getKI();
+    mech.setKI(0.0); // a integral mascararia o amortecimento; volta no teste final
     kiChanged = true;
     posKpIndex = 0;
     lastAcceptedPosKp = Double.NaN;
     aplicarCandidato(0);
     posStage = 0;
-    dial.tunerProfileStart();
+    mech.tunerProfileStart();
     goTo(Phase.POS_KP);
     stageStart = phaseStart;
     resetStageStats();
   }
 
   private void aplicarCandidato(int i) {
-    dial.setKP(kPosKpCandidates[i]);
-    dial.setKD(kKdRatio * kPosKpCandidates[i]);
+    mech.setKP(kPosKpCandidates[i]);
+    mech.setKD(kKdRatio * kPosKpCandidates[i]);
   }
 
   private void resetStageStats() {
@@ -492,12 +526,12 @@ public class DialAutoTuner extends Command {
   private void buscaPosKp(double now, double deg) {
     double ts = now - stageStart;
     double alvo = (posStage == 1 || posStage == 3) ? kPosTargetBDeg : kPosTargetADeg;
-    dial.tunerProfiled(alvo);
+    mech.tunerProfiled(alvo);
 
     // Instável: longe do setpoint do perfil (não do destino, que pode estar a 60°)
-    if (ts > 0.5 && Math.abs(dial.getErrorDeg()) > kMaxTrackErrDeg) {
+    if (ts > 0.5 && Math.abs(mech.getErrorDeg()) > kMaxTrackErrDeg) {
       log(String.format("kP %.4f / kD %.5f: INSTÁVEL (%.0f° do setpoint)",
-          dial.getKP(), dial.getKD(), Math.abs(dial.getErrorDeg())));
+          mech.getKP(), mech.getKD(), Math.abs(mech.getErrorDeg())));
       if (posStage == 3) {
         abort("ficou instável no teste final com kI");
         return;
@@ -507,7 +541,7 @@ public class DialAutoTuner extends Command {
     }
 
     double e = MathUtil.inputModulus(deg - alvo, -180.0, 180.0);
-    if (dial.tunerProfileDone()) {
+    if (mech.tunerProfileDone()) {
       errMin = Math.min(errMin, e);
       errMax = Math.max(errMax, e);
     }
@@ -582,11 +616,11 @@ public class DialAutoTuner extends Command {
       resKD = kKdRatio * resKP;
       log(String.format("Escolhido: kP %.4f / kD %.5f", resKP, resKD));
     }
-    dial.setKP(resKP);
-    dial.setKD(resKD);
+    mech.setKP(resKP);
+    mech.setKD(resKD);
 
     // Teste final: kI (com zona morta) de volta, segurando B
-    dial.setKI(origKI);
+    mech.setKI(origKI);
     kiChanged = false;
     posStage = 3;
     stageStart = Timer.getFPGATimestamp();
@@ -594,7 +628,7 @@ public class DialAutoTuner extends Command {
   }
 
   private void concluir() {
-    dial.tunerStop();
+    mech.tunerStop();
     status("Concluído. Ganhos aplicados — copie para o código para guardar.");
     phase = Phase.CONCLUIDO;
     phasePub.set(phase.name());
@@ -605,12 +639,12 @@ public class DialAutoTuner extends Command {
   private boolean safetyTripped(double now, double rpm) {
     // Motor e ponteiro têm que girar juntos (NEO direto no eixo). Se discordarem, o acoplamento
     // está patinando: o motor gira solto e o ponteiro fica para trás (visto na bancada).
-    double slip = Math.abs(dial.getMotorVelRpm() - rpm);
+    double slip = Math.abs(mech.getMotorVelRpm() - rpm);
     if (slip > kMaxSlipRpm) {
       if (slipSince < 0) slipSince = now;
       if (now - slipSince > 0.3) {
         abort(String.format("acoplamento patinando: motor %.0f RPM, ponteiro %.0f RPM. "
-            + "Confira o parafuso/eixo entre o NEO e o ponteiro", dial.getMotorVelRpm(), rpm));
+            + "Confira o parafuso/eixo entre o NEO e o ponteiro", mech.getMotorVelRpm(), rpm));
         return true;
       }
     } else {
@@ -620,10 +654,10 @@ public class DialAutoTuner extends Command {
       abort(String.format("velocidade %.0f RPM acima do limite", rpm));
       return true;
     }
-    if (dial.getCurrentA() > kMaxCurrentA) {
+    if (mech.isCurrentAbove(kMaxCurrentA)) {
       if (overCurrentSince < 0) overCurrentSince = now;
       if (now - overCurrentSince > 0.3) {
-        abort(String.format("corrente %.1f A acima do limite", dial.getCurrentA()));
+        abort(String.format("corrente %.1f A acima do limite", mech.getCurrentA()));
         return true;
       }
     } else {
@@ -639,7 +673,7 @@ public class DialAutoTuner extends Command {
   }
 
   private void abort(String motivo) {
-    dial.tunerStop();
+    mech.tunerStop();
     status("ABORTADO: " + motivo);
     log("ABORTADO: " + motivo);
     phase = Phase.ABORTADO;

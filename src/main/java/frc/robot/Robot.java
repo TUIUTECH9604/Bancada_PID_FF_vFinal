@@ -15,7 +15,7 @@ import edu.wpi.first.wpilibj.DataLogManager;
 import edu.wpi.first.wpilibj.TimedRobot;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.CommandScheduler;
-import frc.robot.subsystems.DialSubsystem;
+import frc.robot.subsystems.MechanismSubsystem;
 
 /**
  * The methods in this class are called automatically corresponding to each mode, as described in
@@ -58,9 +58,12 @@ public class Robot extends TimedRobot {
 
     Epilogue.bind(this); // registra o log periódico (a cada 20 ms)
 
+    // Gravação do laço de 5 ms no .wpilog (/Mech5ms/...): por padrão só com os logs no pendrive
+    m_robotContainer.enableFastLog(DataLogManager.getLog(), DataLogManager.getLogDir());
+
     // Malha de posição a 200 Hz (mesma thread do loop principal: sem concorrência).
     // Offset de 2,5 ms para não coincidir com o loop de 20 ms.
-    addPeriodic(m_robotContainer::fastLoop, DialSubsystem.kFastPeriodSec, 0.0025);
+    addPeriodic(m_robotContainer::fastLoop, MechanismSubsystem.kFastPeriodSec, 0.0025);
   }
 
   /**

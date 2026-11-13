@@ -15,7 +15,7 @@ import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
  * Física da bancada para a simulação (só existe quando o código roda no computador).
  *
  * <p>Todos os números vêm de MEDIÇÕES na bancada real, não de chute:
- *   - kG = 0,362 V (autoajuste) e kS = 0,077 V, kV = 0,00247 V/RPM (SysId, 2026-11-07)
+ *   - kG = 0,692 V com +220 g (autoajuste, 2026-11-10; era 0,362 V) e kS = 0,077 V, kV = 0,00247 V/RPM (SysId, 2026-11-07)
  *   - inércia e atritos do eixo: ajustados para reproduzir o PÊNDULO real (ponteiro solto em 0°,
  *     2026-11-09). Viradas reais 191°, 337°, 210°, 320°, 226°, 305°, 241°, 292°; o modelo dá
  *     192°, 338°, 211°, 321°, 227°, 306°, 240°, 294° (erro de 1–2° em cada).
@@ -35,12 +35,18 @@ import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
  *     simulação quase não passava do alvo, e o real passa ~2°
  *   - Through Bore: leitura quantizada em 1024 passos (0,35°), como o sensor real
  */
-class DialSim {
+class MechanismSim {
 
   private static final double kTorquePerVolt = 2.6 / 12.0;
+  /** Redução motor → ponteiro (3:1 × 5:1 + 90° 1:1, desde 2026-11-11). */
+  private static final double kGearing = 15.0;
   private static final double kJ = 0.000722;
-  private static final double kGVolts = 0.362;
-  private static final double kEquivLengthM = 1.5 * 9.81 * kJ / (kGVolts * kTorquePerVolt);
+  // Volts NO MOTOR. 15:1: 0,063 medido em 2026-11-11 (era 0,692 sem redução, 0,362 sem o peso)
+  private static final double kBancadaKgVolts = 0.063;
+  /** Só para testes: kG da física (V no motor); 0 = sem gravidade (giratório na horizontal). */
+  static double testKgVolts = Double.NaN;
+  /** kG da física desta simulação (V no motor). */
+  private final double kGVolts;
   private static final double kSVolts = 0.077;
   /** Atrito para começar a mover parado (V). Solto, o ponteiro real parava a ±1° de 270°. */
   private static final double kStaticVolts = 0.01;
@@ -51,6 +57,13 @@ class DialSim {
   /** Atraso entre o controle mandar a tensão e o motor aplicar (s). */
   private static final double kActuatorDelaySec = 0.010;
   private static final double kFreeSpeedRpm = 12.0 / 0.00247;
+
+  /**
+   * Só para testes: batentes físicos simulados {mínimo, máximo} em graus no referencial contínuo do
+   * braço (começa em −90° = pendurado). null = sem batentes (dá voltas). Definir ANTES de criar o
+   * MechanismSubsystem.
+   */
+  static double[] testStopsDeg = null;
 
   private final DCMotor neo = new DCMotor(
       12.0, 2.6, 105.0, 1.8, Units.rotationsPerMinuteToRadiansPerSecond(kFreeSpeedRpm), 1);
@@ -63,10 +76,18 @@ class DialSim {
   /** Fila de tensões pedidas (V) para aplicar com atraso; o tamanho vem de kActuatorDelaySec. */
   private final java.util.ArrayDeque<Double> delayLine = new java.util.ArrayDeque<>();
 
-  DialSim(SparkMax motor, DutyCycleEncoder abs, Encoder quad, boolean absInverted,
+  MechanismSim(SparkMax motor, DutyCycleEncoder abs, Encoder quad, boolean absInverted,
       double absOffsetDeg) {
     // Sem limites de curso: o ponteiro dá voltas completas. Começa pendurado (270° = −90°).
-    arm = new SingleJointedArmSim(neo, 1.0, kJ, kEquivLengthM, -1e6, 1e6, true, -Math.PI / 2);
+    // kJ ainda é a do ponteiro sem redução (sem o eixo novo nem a inércia do rotor refletida): medir
+    double min = testStopsDeg != null ? Math.toRadians(testStopsDeg[0]) : -1e6;
+    double max = testStopsDeg != null ? Math.toRadians(testStopsDeg[1]) : 1e6;
+    kGVolts = Double.isNaN(testKgVolts) ? kBancadaKgVolts : testKgVolts;
+    boolean gravidade = kGVolts > 0.0;
+    double comprimentoEquiv = gravidade
+        ? 1.5 * 9.81 * kJ / (kGVolts * kTorquePerVolt * kGearing) : 0.144;
+    arm = new SingleJointedArmSim(neo, kGearing, kJ, comprimentoEquiv, min, max, gravidade,
+        -Math.PI / 2);
     spark = new SparkMaxSim(motor, neo);
     absSim = new DutyCycleEncoderSim(abs);
     absSim.setConnected(true);
@@ -85,12 +106,12 @@ class DialSim {
   void step(double dt, boolean coasting) {
     double omega = arm.getVelocityRadPerSec();
     double rpm = Units.radiansPerSecondToRotationsPerMinute(omega);
-    spark.iterate(rpm, 12.0, dt);
+    spark.iterate(rpm * kGearing, 12.0, dt); // o Spark vê a velocidade do MOTOR
 
     double volts;
     if (coasting) {
       // Tensão que zera a corrente: só a força contraeletromotriz, o motor não freia
-      volts = omega / neo.KvRadPerSecPerVolt - kViscousVoltsPerRpm * rpm;
+      volts = omega * kGearing / neo.KvRadPerSecPerVolt - kViscousVoltsPerRpm * rpm;
     } else {
       delayLine.addLast(spark.getAppliedOutput() * 12.0);
       int atraso = (int) Math.round(kActuatorDelaySec / dt);

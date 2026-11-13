@@ -1,9 +1,21 @@
-import csv, collections, sys
+"""Analisa uma gravação do robusto.sh/mapa.sh (CSV do nt.sh rec, pelo Wi-Fi).
+
+Genérico: MEC=<mecanismo> escolhe mecanismos/<nome>.conf (CIRCULAR decide se o erro dá a volta).
+Para decidir ganhos, prefira o log a 5 ms (log_rodadas.py): pelo Wi-Fi os picos curtos somem
+(lição 19).
+uso: [MEC=...] python mapa_ana.py arquivo.csv | python mapa_ana.py -r arq1.csv arq2.csv ...
+"""
+import csv, collections, os, sys
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mec  # noqa: E402
+
+CFG = mec.carrega()
 
 
 def wrap(x):
-    return (x + 180) % 360 - 180
+    return (x + 180) % 360 - 180 if CFG.CIRCULAR else x
 
 
 def load(f):
@@ -53,6 +65,15 @@ def analisa(f, settle=1.0):
         sgn = (-1 if antes[0] > 0 else 1) if antes else (1 if sobe else -1)
         chegou = next((k for k, y in enumerate(e) if abs(y) < 1.0), len(e))
         over = max([0] + [sgn * y for y in e[chegou:]])
+        # Com a velocidade do perfil gravada (robusto.sh desde 2026-11-12): passa do alvo = depois
+        # que o perfil PAROU de vez, no sentido em que ele terminou. A aproximação anti-folga vai
+        # além do alvo de propósito e volta; isso não conta.
+        pv = [(t, v) for t, v in d.get('getProfileVelDegps', []) if t0 <= t < t1]
+        mov = [(t, v) for t, v in pv if abs(v) >= 1e-6]
+        if mov:
+            tfim = next((t for t, v in pv if t > mov[-1][0] and abs(v) < 1e-6), mov[-1][0])
+            sgn = 1 if mov[-1][1] > 0 else -1
+            over = max([0] + [sgn * wrap(x - g) for t, x in d['getDeg'] if tfim <= t < t1])
         # tremor RAPIDO: o que sobra tirando a media movel de 0,15 s (vibracao > ~5 Hz)
         w = 15
         mm = np.convolve(q[:, 1], np.ones(w) / w, mode='same')
@@ -63,7 +84,7 @@ def analisa(f, settle=1.0):
         qq = amostra(d['getQuadDeg'], Tq)
         longe = Tq[np.abs(qq - qq[-1]) > 0.3]
         assenta = (longe.max() - t0) if len(longe) else 0.0
-        res.append(dict(ang=round(g) % 360, sobe=sobe, pp=np.ptp(q[:, 1]), rms=np.std(x),
+        res.append(dict(ang=round(CFG.norm(g)), sobe=sobe, pp=np.ptp(q[:, 1]), rms=np.std(x),
                         f=fr[k], dv=np.std(v), over=over, erro=np.mean(e[-10:]),
                         hf=hf, assenta=assenta))
     return res

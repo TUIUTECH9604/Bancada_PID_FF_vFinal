@@ -1,9 +1,10 @@
 #!/bin/bash
+# ANTIGO, só da bancada (caminhos /Tuning/Dial fixos). Para qualquer mecanismo: robusto.sh/bateria.sh.
 # uso: holdtest.sh arquivo  (perfil até 60°, segura 12 s, volta a 0)
 cd "$(dirname "$0")"
 ./nt.sh enabled || { echo "ROBO NAO HABILITADO (habilite no Driver Station)"; exit 1; }
 ./nt.sh set /Tuning/Dial/TestSetpointDeg 60 >/dev/null
-./nt.sh rec 16 $1 Robot/m_robotContainer/dial/getDeg Robot/m_robotContainer/dial/getGoalDeg Robot/m_robotContainer/dial/getCommandedVolts Robot/m_robotContainer/dial/getIntegralVolts >/dev/null & R=$!
+./nt.sh rec 16 $1 Robot/m_robotContainer/mechanism/getDeg Robot/m_robotContainer/mechanism/getGoalDeg Robot/m_robotContainer/mechanism/getCommandedVolts Robot/m_robotContainer/mechanism/getIntegralVolts >/dev/null & R=$!
 ./nt.sh set /Tuning/Dial/RemoteCmd 7 >/dev/null
 python -c "import time;time.sleep(14)"
 ./nt.sh set /Tuning/Dial/TestSetpointDeg 0 >/dev/null

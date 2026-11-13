@@ -35,6 +35,7 @@ public class NtBridge {
       case "list" -> list(args.length > 1 ? args[1] : "/");
       case "get" -> get(Arrays.copyOfRange(args, 1, args.length));
       case "set" -> set(args[1], args[2]);
+      case "setm" -> setMany(Arrays.copyOfRange(args, 1, args.length));
       case "rec" -> rec(Double.parseDouble(args[1]), args[2], Arrays.copyOfRange(args, 3, args.length));
       default -> System.out.println("comando desconhecido: " + cmd);
     }
@@ -94,6 +95,34 @@ public class NtBridge {
     System.out.println(name + " (" + (type.isEmpty() ? "novo" : type) + ") -> " + value
         + "   lido de volta: " + fmt(s.get()));
     p.close();
+  }
+
+  /** Vários de uma vez (uma conexão só): setm topico1 valor1 topico2 valor2 ... */
+  static void setMany(String[] kv) throws Exception {
+    int n = kv.length / 2;
+    Topic[] ts = new Topic[n];
+    GenericSubscriber[] subs = new GenericSubscriber[n];
+    for (int i = 0; i < n; i++) {
+      ts[i] = inst.getTopic(kv[2 * i]);
+      subs[i] = ts[i].genericSubscribe();
+    }
+    Thread.sleep(600);
+    GenericPublisher[] pubs = new GenericPublisher[n];
+    for (int i = 0; i < n; i++) {
+      String type = ts[i].getTypeString();
+      String value = kv[2 * i + 1];
+      switch (type) {
+        case "boolean" -> { pubs[i] = ts[i].genericPublish("boolean"); pubs[i].setBoolean(Boolean.parseBoolean(value)); }
+        case "string" -> { pubs[i] = ts[i].genericPublish("string"); pubs[i].setString(value); }
+        default -> { pubs[i] = ts[i].genericPublish("double"); pubs[i].setDouble(Double.parseDouble(value)); }
+      }
+    }
+    inst.flush();
+    Thread.sleep(500);
+    for (int i = 0; i < n; i++) {
+      System.out.println(kv[2 * i] + " -> " + kv[2 * i + 1] + "   lido de volta: " + fmt(subs[i].get()));
+      pubs[i].close();
+    }
   }
 
   static void rec(double secs, String file, String[] prefixes) throws Exception {

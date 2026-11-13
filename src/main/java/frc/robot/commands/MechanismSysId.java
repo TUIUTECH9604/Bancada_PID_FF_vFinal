@@ -4,7 +4,7 @@ import edu.wpi.first.networktables.NetworkTableInstance;
 import edu.wpi.first.networktables.StringPublisher;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj2.command.Command;
-import frc.robot.subsystems.DialSubsystem;
+import frc.robot.subsystems.MechanismSubsystem;
 
 /**
  * Caracterização (estilo SysId do WPILib) para achar kV e kA do ponteiro.
@@ -19,11 +19,11 @@ import frc.robot.subsystems.DialSubsystem;
  *
  * <p>Disable a qualquer momento para tudo na hora.
  */
-public class DialSysId extends Command {
+public class MechanismSysId extends Command {
 
   private static final double kMaxRpm = 200.0;     // para o teste ao passar disto (a leitura tem ~50 ms de atraso)
   private static final double kAbortRpm = 450.0;   // segurança absoluta
-  private static final double kMaxCurrentA = 18.0;
+  private static final double kMaxCurrentA = 18.0;  // logo abaixo do limite do Spark (20 A): cravado nele = preso
   private static final String kCsvPath = "/home/lvuser/sysid.csv";
 
   /** {tipo (0 = degrau, 1 = rampa), tensão do degrau ou V/s da rampa, duração máxima (s)}. */
@@ -39,7 +39,7 @@ public class DialSysId extends Command {
 
   private enum Phase { ASSENTAR, TESTE, CONCLUIDO, ABORTADO }
 
-  private final DialSubsystem dial;
+  private final MechanismSubsystem mech;
   private Phase phase;
   private int test;
   private double phaseStart;
@@ -49,15 +49,22 @@ public class DialSysId extends Command {
   private final StringPublisher statusPub =
       NetworkTableInstance.getDefault().getTable("SysId").getStringTopic("Status").publish();
 
-  public DialSysId(DialSubsystem dial) {
-    this.dial = dial;
-    addRequirements(dial);
+  public MechanismSysId(MechanismSubsystem mech) {
+    this.mech = mech;
+    addRequirements(mech);
     setName("SysId");
   }
 
   @Override
   public void initialize() {
-    dial.sysIdBegin();
+    if (mech.limitsActive()) {
+      // O SysId dá várias voltas: com batentes, bateria neles. Desligar /Tuning/Dial/LimitsOn
+      // só se os batentes forem retirados.
+      phase = Phase.ABORTADO;
+      status("ABORTADO: limites de curso ligados (o SysId dá várias voltas e bateria nos batentes)");
+      return;
+    }
+    mech.sysIdBegin();
     test = 0;
     overCurrentSince = -1;
     goTo(Phase.ASSENTAR);
@@ -68,17 +75,17 @@ public class DialSysId extends Command {
   public void execute() {
     double now = Timer.getFPGATimestamp();
     double t = now - phaseStart;
-    double rpm = dial.getVelRpm();
+    double rpm = mech.getVelRpm();
 
     // Segurança
     if (Math.abs(rpm) > kAbortRpm) {
       abort(String.format("velocidade %.0f RPM", rpm));
       return;
     }
-    if (dial.getCurrentA() > kMaxCurrentA) {
+    if (mech.isCurrentAbove(kMaxCurrentA)) {
       if (overCurrentSince < 0) overCurrentSince = now;
       if (now - overCurrentSince > 0.3) {
-        abort(String.format("corrente %.1f A", dial.getCurrentA()));
+        abort(String.format("corrente %.1f A", mech.getCurrentA()));
         return;
       }
     } else {
@@ -87,41 +94,43 @@ public class DialSysId extends Command {
 
     switch (phase) {
       case ASSENTAR -> {
-        dial.tunerStop(); // brake: freia
+        mech.tunerStop(); // brake: freia
         if (Math.abs(rpm) < 2.0) {
           if (stillSince < 0) stillSince = now;
         } else {
           stillSince = -1;
         }
-        boolean hanging = dial.tunerCheckHanging();
-        if (stillSince > 0 && now - stillSince > 1.0 && hanging) {
+        // Parado em QUALQUER ângulo serve (o ajuste já tem o termo kG·cos θ). Antes exigia o
+        // ponteiro pendurado em 270°, mas com a redução 15:1 a caixa segura o ponteiro onde ele
+        // parar e o teste abortava no 2º degrau.
+        if (stillSince > 0 && now - stillSince > 1.0) {
           goTo(Phase.TESTE);
           status(String.format("Teste %d/%d: %s %+.2f", test + 1, kTests.length,
               kTests[test][0] == 0 ? "degrau" : "rampa (V/s)", kTests[test][1]));
         } else if (t > 20.0) {
-          abort("o ponteiro não assentou pendurado em 20 s");
+          abort("o ponteiro não parou em 20 s");
         }
       }
       case TESTE -> {
         double[] c = kTests[test];
         double volts = c[0] == 0 ? c[1] : c[1] * t;
-        dial.sysIdRun(test, volts);
+        mech.sysIdRun(test, volts);
         boolean fim = t > c[2]
             || (t > 0.1 && Math.abs(rpm) > kMaxRpm)
             || Math.abs(volts) > kMaxRampVolts;
         if (fim) {
-          dial.tunerStop();
+          mech.tunerStop();
           test++;
           if (test >= kTests.length) {
             phase = Phase.CONCLUIDO;
-            status("Concluído. " + dial.getSysIdSamples() + " amostras em " + kCsvPath);
+            status("Concluído. " + mech.getSysIdSamples() + " amostras em " + kCsvPath);
           } else {
             goTo(Phase.ASSENTAR);
             status("Assentando antes do teste " + (test + 1) + "/" + kTests.length);
           }
         }
       }
-      default -> dial.tunerStop();
+      default -> mech.tunerStop();
     }
   }
 
@@ -132,7 +141,10 @@ public class DialSysId extends Command {
 
   @Override
   public void end(boolean interrupted) {
-    dial.sysIdEnd(kCsvPath); // grava o que tiver, mesmo interrompido
+    if (mech.getSysIdSamples() == 0 && phase == Phase.ABORTADO) {
+      return; // nem começou (limites ligados)
+    }
+    mech.sysIdEnd(kCsvPath); // grava o que tiver, mesmo interrompido
     if (interrupted) {
       status("Interrompido no teste " + (test + 1) + ". Dados parciais em " + kCsvPath);
     }
@@ -145,7 +157,7 @@ public class DialSysId extends Command {
   }
 
   private void abort(String motivo) {
-    dial.tunerStop();
+    mech.tunerStop();
     phase = Phase.ABORTADO;
     status("ABORTADO: " + motivo);
   }

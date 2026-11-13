@@ -1,3 +1,4 @@
-# Scripts bash precisam de LF (com CRLF o Git Bash falha com "")
+# Scripts do Git Bash precisam de fim de linha LF (CRLF quebra em outros computadores)
 *.sh text eol=lf
+*.conf text eol=lf
 gradlew text eol=lf

@@ -8,7 +8,7 @@ Claude Code numa conversa nova.
 > **Para o Claude:** se a pessoa estiver em outro projeto ou subsistema, siga este guia na ordem.
 > Antes de tudo, entenda o mecanismo (seção 1). Não pule a validação robusta (seção 7). Os
 > números desta bancada **não servem** para outro mecanismo; o **processo**, sim. A
-> implementação de referência está em `src/main/java/frc/robot/subsystems/DialSubsystem.java`.
+> implementação de referência está em `src/main/java/frc/robot/subsystems/MechanismSubsystem.java`.
 
 ## Ordem do trabalho
 
@@ -65,6 +65,9 @@ Armadilhas que já pegamos:
   corrente ele vai puxar?
 - **Limites de curso por software** se houver batentes, e **nunca** "caminho mais curto com wrap
   de 360°" num mecanismo com batentes: ele pode decidir dar a volta e bater.
+- **Redução multiplica a força**: com 15:1, 0,4 V e 0,8 A lidos já arrancaram um parafuso usado
+  como batente (2026-11-11). Nunca encostar o motor de propósito num batente fraco; marque os
+  limites à mão. A corrente lida pelo controlador não mostra a força com pouca tensão.
 - Testes automáticos com **parada automática** quando o mecanismo começa a oscilar (seção 7).
 - Comandos remotos de teste que **só agem com o robô habilitado** e voltam a zero ao desabilitar
   (padrão `RemoteCmd` do `RobotContainer` desta bancada).
@@ -81,8 +84,8 @@ O feedforward faz quase todo o trabalho; o PID só corrige o resto.
 
 Como medir:
 - **kG (braço/elevador):** rampa de tensão bem lenta para os dois lados, com o mecanismo quase
-  parado (`DialAutoTuner` faz isso). Ou SysId.
-- **kS, kV, kA:** **SysId** (degraus e rampas em malha aberta). O `DialSysId` grava a 200 Hz e
+  parado (`ArmAutoTuner` faz isso). Ou SysId.
+- **kS, kV, kA:** **SysId** (degraus e rampas em malha aberta). O `MechanismSysId` grava a 200 Hz e
   `tools/ntbridge/sysid_fit.py` ajusta o modelo. Compare o método direto com o "discreto"; na
   bancada, o kA que funcionou ao vivo foi o do método discreto.
 - **Confira com a física:** kV de um NEO direto ≈ 12 V / 5676 RPM. O kA dá a inércia
@@ -202,17 +205,48 @@ Um teste fácil aprova ganhos que oscilam no uso real. Na bancada, ganhos aprova
 4. **Crie um comando remoto de teste** (como `RemoteCmd`) e um alvo ajustável (como
    `TestSetpointDeg`), para o Claude rodar testes sem controle.
 5. Os scripts `robusto.sh`, `mapa.sh` e `mapa_ana.py` usam os tópicos desta bancada
-   (`Robot/m_robotContainer/dial/...`). No seu projeto, troque esses nomes.
+   (`Robot/m_robotContainer/mechanism/...`). No seu projeto, troque esses nomes.
 6. Peça ao Claude: *"leia `docs/METODO_SUBSISTEMAS.md` e me ajude a ajustar o [mecanismo]"*. Ele
    vai fazer as perguntas da seção 1 antes de mexer em ganhos.
+
+## Usar o código desta bancada em outro mecanismo
+
+O código foi separado para servir de padrão de teste (2026-11-11):
+
+1. **Configuração** (`subsystems/MechanismConfig.java`): tudo o que muda de um mecanismo para
+   outro — nome (pasta `/Tuning/{nome}/`), redução, modelo de gravidade (`NONE` giratório na
+   horizontal, `COSINE` braço, `CONSTANT` carga fixa), zero do sensor, corrente, limites de curso e
+   os ganhos/perfil padrão. Comece copiando: `MechanismConfig.BANCADA.toBuilder("Braco")...build()`.
+   Ganhos iniciais conservadores (kP baixo, perfil lento) e **sem** kA até medir.
+2. **Hardware** (`subsystems/MechanismIO.java`): implemente a interface para o motor e o sensor do
+   mecanismo (o `MechanismIOSparkMax` é o exemplo: Spark MAX + Through Bore na roboRIO). Kraken/TalonFX
+   ou encoder ligado no controlador = outra implementação; o controle não muda.
+3. `new MechanismSubsystem(config, io)` — o resto (perfil, FF + PID a 5 ms, limites, testes remotos,
+   autoajuste, SysId, gravação a 5 ms) é o mesmo.
+4. Simulação primeiro: `MechanismConfigSimTest` mostra um mecanismo diferente (torre sem
+   gravidade) rodando no mesmo código. Escreva um teste assim antes de ligar o mecanismo real.
+
+5. **Ajuste automático genérico** (`commands/MechanismTuner.java`, RemoteCmd 11): confere o
+   sentido, mede kS/kG/kV andando devagar numa faixa de ±40° (dentro dos limites, sem procurar
+   batente), sobe os ganhos em degraus com parada por oscilação e escolhe com margem de 1,5×.
+   Resultado em `/MechTune/Relatorio`. Depois, **valide com o `robusto.sh`** (2 rodadas) antes de
+   gravar na configuração; perfil e kA continuam na `bateria.sh`.
+
+Ainda não suportado: mecanismos **lineares** (elevador em metros). O `ArmAutoTuner` antigo
+(RemoteCmd 8) supõe braço com gravidade cos θ pendurado em 270°; prefira o `MechanismTuner`.
 
 ## Referência nesta bancada
 
 | Assunto | Onde ver |
 |---|---|
-| Malha de 5 ms, FF + PID à mão, integral com zona morta, quadratura no D | `DialSubsystem.java` |
-| Autoajuste de kG/kS e busca de kP/kD | `commands/DialAutoTuner.java` |
-| SysId em malha aberta gravando a 200 Hz | `commands/DialSysId.java` + `tools/ntbridge/sysid_fit.py` |
-| Simulação calibrada pela física medida + teste automático | `DialSim.java` + `src/test/.../DialSubsystemSimTest.java` |
+| Malha de 5 ms, FF + PID à mão, integral com zona morta, quadratura no D | `MechanismSubsystem.java` |
+| Autoajuste de kG/kS e busca de kP/kD | `commands/ArmAutoTuner.java` |
+| SysId em malha aberta gravando a 200 Hz | `commands/MechanismSysId.java` + `tools/ntbridge/sysid_fit.py` |
+| Simulação calibrada pela física medida + teste automático | `MechanismSim.java` + `src/test/.../MechanismSubsystemSimTest.java` |
 | Teste robusto com parada automática | `tools/ntbridge/robusto.sh`, `osc.py`, `mapa_ana.py` |
+| Várias configurações × 2 rodadas, com resumo | `tools/ntbridge/bateria.sh` + `compara.py` |
+| Configuração do mecanismo e camada de hardware | `MechanismConfig.java`, `MechanismIO.java`, `MechanismIOSparkMax.java` |
+| Gravação a 5 ms no robô e análise | `MechanismFastLog.java` + `tools/ntbridge/logs_get.sh`, `log_ana.py`, `wpilog.py` |
+| Ajuste automático genérico (sentido, FF, ganhos em degraus) | `commands/MechanismTuner.java` + testes `MechanismTuner*SimTest` |
+| Limites de curso (por dentro da faixa) | `MechanismSubsystem` (`setLimits`), teste `MechanismLimitFinderSimTest` |
 | Histórico do porquê de cada decisão | `git log` (mensagens com os números) e `CLAUDE.md` |

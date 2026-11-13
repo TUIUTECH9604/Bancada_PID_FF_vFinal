@@ -77,6 +77,9 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    // Cada classe de teste num processo próprio: cada uma cria um SparkMax com o CAN ID 2, e a REVLib
+    // não deixa criar dois com o mesmo ID no mesmo processo.
+    forkEvery = 1
     systemProperty 'junit.jupiter.extensions.autodetection.enabled', 'true'
 }
 

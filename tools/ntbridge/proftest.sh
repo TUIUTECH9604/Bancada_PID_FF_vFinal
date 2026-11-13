@@ -1,10 +1,11 @@
 #!/bin/bash
+# ANTIGO, só da bancada (caminhos /Tuning/Dial fixos). Para qualquer mecanismo: robusto.sh/bateria.sh.
 # uso: kdtest.sh kP kD arquivo
 cd "$(dirname "$0")"
 ./nt.sh enabled || { echo "ROBO NAO HABILITADO (habilite no Driver Station)"; exit 1; }
 ./nt.sh set /Tuning/Dial/kP $1 >/dev/null; ./nt.sh set /Tuning/Dial/kD $2 >/dev/null
 ./nt.sh set /Tuning/Dial/TestSetpointDeg 0 >/dev/null
-./nt.sh rec 17 $3 Robot/m_robotContainer/dial/getDeg Robot/m_robotContainer/dial/getGoalDeg Robot/m_robotContainer/dial/getTargetDeg Robot/m_robotContainer/dial/getFFVolts Robot/m_robotContainer/dial/getCommandedVolts Robot/m_robotContainer/dial/getPidVolts Robot/m_robotContainer/dial/getVelRpm /FMSInfo/FMSControlData >/dev/null &
+./nt.sh rec 17 $3 Robot/m_robotContainer/mechanism/getDeg Robot/m_robotContainer/mechanism/getGoalDeg Robot/m_robotContainer/mechanism/getTargetDeg Robot/m_robotContainer/mechanism/getFFVolts Robot/m_robotContainer/mechanism/getCommandedVolts Robot/m_robotContainer/mechanism/getPidVolts Robot/m_robotContainer/mechanism/getVelRpm /FMSInfo/FMSControlData >/dev/null &
 REC=$!
 ./nt.sh set /Tuning/Dial/RemoteCmd 7 >/dev/null
 python -c "import time; time.sleep(4)"

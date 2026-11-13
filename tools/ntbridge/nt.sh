@@ -3,6 +3,7 @@
 #   ./nt.sh list [prefixo]                     tópicos e valores
 #   ./nt.sh get topico...                      lê
 #   ./nt.sh set topico valor                   escreve
+#   ./nt.sh setm t1 v1 t2 v2 ...               escreve vários numa conexão só (bem mais rápido)
 #   ./nt.sh rec segundos arquivo.csv prefixo...   grava mudanças (t_robô,topico,valor)
 #   ./nt.sh enabled                            código de saída 0 se o robô estiver habilitado
 # Servidor: variável NT_SERVER (padrão 169.254.29.48, o IP da bancada por cabo).

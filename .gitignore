@@ -190,4 +190,11 @@ compile_commands.json
 tools/ntbridge/libs/
 tools/ntbridge/out/
 tools/ntbridge/*.csv
+tools/ntbridge/bat_*/
+tools/ntbridge/aa_*/
+tools/ntbridge/logs/
 tools/ntbridge/abortou.flag
+tools/ntbridge/fim.flag
+
+# Configuração local do Claude Code (permissões deste computador)
+.claude/settings.local.json
