@@ -349,6 +349,25 @@ atrito no modelo) nem vê a folga: em volta da escolhida testa kD ×0,5/×2 e kI
 do LQR e o dobro; se kI 0: kP/`VOLTA3_TI_S` (0,3 s) e o dobro — dá 0,02 na bancada). O relatório
 diz "de onde veio cada valor". Na bancada: atual, D05, D2, I0, I2 (~45 min). README ganhou o
 roteiro "Usar num subsistema NOVO".
+**⚠️ CORREÇÃO (mesmo dia): NÃO foi a mecânica — o LAÇO DE CONTROLE ficou 5× mais lento.** No
+log a 5 ms, de t ≈ 4295 s em diante (robô desabilitado e parado, ~1 h de programa ligado) a thread
+inteira do robô passou a acordar a cada **25,4 ms** (o callback de 5 ms E o Epilogue de 20 ms;
+cada execução continuava rápida, Epilogue ~0,5 ms; CPU 90% livre; memória ok; sem "overrun" em
+série). **"Restart Robot Code" resolveu** (4,95 ms) e o robusto voltou a passa 1,2° / erro final
+0,14–0,19° (`bat_20261113/restart_r1/r2`). Causa não achada (agendador do WPILib/roboRIO; houve
+~1.000 conexões da ponte NT e 30 perdas de comunicação). Feito (deploy): `getLoopPeriodMs` e
+`isLoopSlow` (média do período, sempre medida) e aviso no DS se > 8 ms por 2 s; o `robusto.sh`
+recusa rodar com o laço lento ("LACO LENTO") e a bateria para; `log_rodadas` guarda `laco_ms` por
+rodada e o relatório do assistente deixa de fora (com aviso) as rodadas com laço > 8 ms. **Lição
+20: se a passada piorar de repente com os mesmos ganhos, olhe `getLoopPeriodMs` antes da mecânica.**
+**SysId com a 15:1 e kit do zero (2026-11-13 19:03, log `FRC_20261113_224249`,
+`bat_20261113/sysid_15a1.csv`):** dados para calibrar a `MechanismSim` (J, atrito e folga da caixa
+nunca foram recalibrados para a 15:1). Kit só-FF com kG = 0 e VelkV = 0 (como um subsistema novo):
+**funcionou** — kS 0,118, kG 0,061, kV 0,0187 V/RPM (o kV das passadas lentas sai baixo: o do log
+em velocidade normal é ~0,032). Próximo (na simulação, sem robô): **modo do zero** do assistente —
+kit mede kS/kG/kV + etapa nova de acelerações curtas (kA) dentro de ±40°, a malha de velocidade do
+kit pelo kV medido, campanha a partir do FF medido + LQR + kI = kP/0,3 s, pular o `ref` sem ganhos;
+validar na bancada zerando tudo (resposta conhecida: kG ≈ 0,09, kP 0,006, kI 0,02, kD baixo).
 **3ª volta no robô (2026-11-13 ~17:20, log `FRC_20261113_200047`) e O MECANISMO MUDOU:** com os
 MESMOS ganhos (atual), a passada foi de 1,0–1,3° (manhã; 16:35 ainda 1,4°) para **3,5–3,8°** (pior
 caso 75>90 de 5,0° para 7,1–7,5°), bateria 11,4–11,8 V, motor 25 °C → mecânica (folga/algo

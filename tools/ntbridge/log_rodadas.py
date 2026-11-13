@@ -159,7 +159,16 @@ def _segmentos(path):
                 sel = (tb >= a) & (tb <= b) & (vb > 1.0)  # > 1 V: o Spark manda 0 antes de ler
                 if sel.any():
                     bat[nome] = (float(vb[sel].min()), float(vb[sel].mean()))
-        out.append(dict(
+        # período do laço de 5 ms nesta rodada (2026-11-13: ficou em 25 ms sozinho e a medida
+        # não valia; o relatório deixa de fora as rodadas com laço lento)
+        laco = np.nan
+        tv = CFG.canal5ms(s, "dtMs")
+        if tv is not None:
+            tl, vl = np.asarray(tv[0]), np.asarray(tv[1])
+            sel = (tl >= a) & (tl <= b)
+            if sel.any():
+                laco = float(np.median(vl[sel]))
+        out.append(dict(laco_ms=laco,
             arquivo=os.path.basename(path), t=a, config={k: c[k] for k in variam}, ajustes=dict(c),
             passa_med=float(rr[:, 1].mean()), passa_max=float(rr[:, 1].max()),
             grandes_med=float(grandes[:, 1].mean()) if len(grandes) else np.nan,
@@ -205,6 +214,7 @@ if __name__ == "__main__":
                   f" | chega {d['chega']:.2f}s"
                   + (f" (NÃO chegou {d['nao_chegou']})" if d["nao_chegou"] else "")
                   + (f" | PROTEÇÃO DISPAROU {d['osc']}x" if d["osc"] else "")
+                  + (f" | LAÇO LENTO {d['laco_ms']:.1f} ms (não vale)" if d.get("laco_ms", 0) > 8 else "")
                   + f" | tremor {d['tremor_med']:.2f}/{d['tremor_max']:.2f} | piores: {piores}"
                   + (f" | {bat}" if bat else "") + f" | n={d['n']}")
     if args.csv and todas:

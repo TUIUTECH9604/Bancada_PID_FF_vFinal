@@ -316,6 +316,16 @@ public class MechanismSubsystem extends SubsystemBase {
   private double lastFastTime = -1.0;
   @NotLogged
   private double loopDtMs = 0.0;
+  /** Período do callback rápido (média móvel, sempre medido, mesmo parado/desabilitado). */
+  @NotLogged
+  private double loopPeriodMs = kFastPeriodSec * 1000.0;
+  @NotLogged
+  private double loopSlowSince = Double.NaN;
+  @NotLogged
+  private double loopWarnTime = Double.NEGATIVE_INFINITY;
+  /** Laço "lento" acima disto (ms) por kLoopSlowSec: o controle piora muito (lição 1). */
+  private static final double kLoopSlowMs = 8.0;
+  private static final double kLoopSlowSec = 2.0;
   /** O Spark está em BRAKE? A simulação usa para saber se o motor freia. Começa em COAST (IO). */
   @NotLogged
   private boolean brakeMode = false;
@@ -661,6 +671,23 @@ public class MechanismSubsystem extends SubsystemBase {
     return loopDtMs;
   }
 
+  /** Período do callback rápido, média móvel, medido SEMPRE (deveria ser ~5 ms). */
+  public double getLoopPeriodMs() {
+    return loopPeriodMs;
+  }
+
+  /**
+   * O laço rápido está lento (> kLoopSlowMs há mais de kLoopSlowSec)? Em 2026-11-13 a thread do
+   * robô passou sozinha de 5 para 25,4 ms (e o Epilogue de 20 para 25,4 ms), com o robô parado,
+   * depois de ~1 h de programa ligado: a passada foi de ~1° para ~3,5° com os mesmos ganhos.
+   * "Restart Robot Code" resolveu. Causa não achada (não era o código do controle: o Epilogue
+   * continuava levando 0,5 ms por execução).
+   */
+  public boolean isLoopSlow() {
+    return !Double.isNaN(loopSlowSince)
+        && Timer.getFPGATimestamp() - loopSlowSince > kLoopSlowSec;
+  }
+
   /** Parte P (antes do limite OutMax), para a gravação a 5 ms. */
   @NotLogged
   public double getPTermVolts() {
@@ -978,12 +1005,31 @@ public class MechanismSubsystem extends SubsystemBase {
     double now = Timer.getFPGATimestamp();
     double dt = lastFastTime < 0 ? kFastPeriodSec : now - lastFastTime;
     lastFastTime = now;
+    watchLoopPeriod(now, dt);
     // Simulação: física primeiro (motor parado em COAST = solto, sem freio). Depois todos os
     // sensores são lidos de uma vez: o controle deste ciclo usa essa leitura.
     io.simulationStep(MathUtil.clamp(dt, 0.001, 0.03), mode == Mode.STOPPED && !brakeMode);
     io.updateInputs(in);
     fastStep(now, dt);
     if (fastLog != null) fastLog.record(this, dt);
+  }
+
+  /** Vigia o período do laço rápido e avisa no Driver Station se ficar lento (ver isLoopSlow). */
+  private void watchLoopPeriod(double now, double dt) {
+    if (dt <= 0.0 || dt > 0.5) return; // primeiro passo / pausa longa (ex.: deploy)
+    loopPeriodMs += (dt * 1000.0 - loopPeriodMs) * 0.02; // média de ~50 passos
+    if (loopPeriodMs <= kLoopSlowMs) {
+      loopSlowSince = Double.NaN;
+      return;
+    }
+    if (Double.isNaN(loopSlowSince)) loopSlowSince = now;
+    if (now - loopSlowSince > kLoopSlowSec && now - loopWarnTime > 60.0) {
+      loopWarnTime = now;
+      DriverStation.reportWarning(String.format("[Mecanismo] Laço de controle LENTO: %.1f ms "
+          + "(deveria ser %.0f ms) — o mecanismo passa mais do alvo. Reinicie o código do robô "
+          + "(Restart Robot Code no Driver Station).", loopPeriodMs, kFastPeriodSec * 1000.0),
+          false);
+    }
   }
 
   private void fastStep(double now, double dt) {

@@ -390,6 +390,13 @@ def cmd_relatorio(pasta, logs):
         pars += p
     if not rods:
         sys.exit("nenhuma rodada do robusto nos logs")
+    # Rodadas com o laço de controle lento não valem (2026-11-13: 25 ms em vez de 5 → a passada
+    # triplicou com os mesmos ganhos): ficam de fora e o relatório avisa
+    lentas = [d for d in rods if d.get("laco_ms", 0) > 8]
+    rods = [d for d in rods if not d.get("laco_ms", 0) > 8]
+    if not rods:
+        sys.exit(f"todas as {len(lentas)} rodadas rodaram com o laço lento (> 8 ms): reinicie o "
+                 "código do robô e rode de novo")
 
     # Cada volta é avaliada SÓ com as rodadas dela (mesmo horário, mesma condição do mecanismo)
     por_volta = separa_voltas(e, rods, pars)
@@ -450,6 +457,13 @@ def cmd_relatorio(pasta, logs):
     L = [f"# Relatório do assistente de ajuste — {CFG.arquivo} ({CFG.NOME})", "",
          "Gerado pelo `autoajuste.sh`. **É uma recomendação: uma pessoa aprova antes de gravar no "
          "código**, depois deploy e `robusto.sh` 2× vindo do código.", ""]
+    if lentas:
+        L += ["## ⚠️ Rodadas com o LAÇO DE CONTROLE LENTO (deixadas de fora)", "",
+              f"{len(lentas)} rodada(s) rodaram com o laço a ~"
+              f"{np.median([d['laco_ms'] for d in lentas]):.0f} ms em vez de 5 ms: com isso o "
+              "mecanismo passa bem mais do alvo e a comparação não vale. Reinicie o código do robô "
+              "(Restart Robot Code) e rode essas configurações de novo. Em 2026-11-13 isso aconteceu "
+              "sozinho depois de ~1 h de programa ligado.", ""]
     if avisos:
         L += ["## ⚠️ O MECANISMO MUDOU durante os testes", "",
               "A mesma configuração ficou bem pior de uma volta para outra — não foram os ganhos:"

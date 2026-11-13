@@ -86,7 +86,8 @@ for rodada in $RODADAS; do
     aplica "$BASE $(echo ${MUDA[$i]})"
     confere "$BASE" "${MUDA[$i]}" || { aplica "$BASE"; exit 1; }
     echo "== $n r$rodada (${MUDA[$i]:-base}) temp $t C  $(date +%H:%M:%S)"
-    res=$(./robusto.sh "$OUT/${n}_r$rodada.csv" 2>&1 | grep -E "ABORTADO|tremor rapido|NAO HABILITADO")
+    res=$(./robusto.sh "$OUT/${n}_r$rodada.csv" 2>&1 | grep -E "ABORTADO|tremor rapido|NAO HABILITADO|LACO LENTO")
+    if echo "$res" | grep -q "LACO LENTO"; then echo "$res"; echo "PARADO: laço de controle lento (as medidas não valeriam)"; aplica "$BASE"; exit 1; fi
     echo "$res"
     if [ "$PARADAS" -gt 0 ] && [ -n "$PARADA_ALVO" ] && ! echo "$res" | grep -q "ABORTADO\|NAO HABILITADO"; then
       ./testeparada.sh "$PARADAS" nenhum 2>&1 | grep -E "oscilou|PARADO|NAO HABILITADO" | sed 's/^/  paradas: /'

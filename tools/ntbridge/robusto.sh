@@ -11,6 +11,13 @@ source ./mec.sh
 # Windows não entende /c/... (assim a vigia não gravava e a parada automática não funcionava)
 D="$(pwd -W 2>/dev/null || pwd)"
 ./nt.sh enabled || { echo "ROBO NAO HABILITADO"; exit 1; }
+# Laço de controle lento = medição que não vale (2026-11-13: a thread do robô foi de 5 para 25 ms
+# sozinha e a passada triplicou com os mesmos ganhos). Código antigo sem getLoopPeriodMs: pula.
+lp=$(./nt.sh get $T/getLoopPeriodMs | awk '{print $3}')
+if [ -n "$lp" ] && python -c "import sys; sys.exit(0 if float('$lp') > 8 else 1)" 2>/dev/null; then
+  echo "LACO LENTO: ${lp} ms (deveria ser 5) - reinicie o codigo do robo (Restart Robot Code no DS) e rode de novo"
+  exit 1
+fi
 # A gravação termina quando o último alvo acaba (fim.flag), não num tempo fixo: pelo Wi-Fi cada
 # ./nt.sh leva ~3 s e com tempo fixo os últimos alvos ficavam fora. DUR é só o teto de segurança.
 DUR=900
