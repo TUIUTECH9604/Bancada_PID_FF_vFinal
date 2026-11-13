@@ -27,8 +27,9 @@ vieram junto — este arquivo é o que sobrou delas. Então:
 5. **Ao terminar algo**: commit em português explicando o porquê e os números medidos, e
    atualize este arquivo (estado, ganhos, lições). O push é o usuário que faz pelo GitHub
    Desktop — avise quando houver commits para enviar.
-6. Se o `git push` pela linha de comando falhar com 403, é a conta do git do computador sem
-   permissão no repositório da equipe: peça para o usuário enviar pelo GitHub Desktop.
+6. Envio: clone em `C:/CODE/2026/BANCADA/Bancada_PID_FF_vFinal` (ver "O que é"), que já usa a conta
+   da equipe no push. Se der 403 (outro computador), é a conta do git sem permissão no
+   repositório da equipe: peça para o usuário enviar pelo GitHub Desktop.
 
 ## Estado atual (2026-11-12) — REDUÇÃO 15:1; ponteiro com parafusos, kG 0,09, kD 0,00015, D parado 0,3
 
@@ -397,8 +398,10 @@ Bancada de testes de controle de posição, no estilo de um braço de FRC:
   `Bancada_Testes_Mecanismos`). Se renomear lá, o GitHub redireciona o nome antigo. Commits como
   `TUIUTECH9604 <teamtuiutech@gmail.com>`. **Clone git: `C:\CODE\2026\BANCADA\Bancada_PID_FF_vFinal`**
   (criado em 2026-11-13; esta pasta de trabalho NÃO é clone). Para enviar: copiar os arquivos
-  desta pasta para o clone (sem build/, logs/, libs/, out/, bat_*, aa_*, .csv), commit lá, e o
-  **push pelo GitHub Desktop** (a conta do git da linha de comando, WeksleyLima, leva 403).
+  desta pasta para o clone (sem build/, logs/, libs/, out/, bat_*, aa_*, .csv), commit lá e
+  `git push` (o usuário autorizou). O clone tem `credential.https://github.com.username =
+  TUIUTECH9604` (conta da equipe, login feito em 2026-11-13); sem isso o git usa a conta pessoal
+  WeksleyLima, que leva 403. O GitHub Desktop também usa a conta da equipe.
 
 ## Arquitetura do controle (`MechanismSubsystem`)
 
