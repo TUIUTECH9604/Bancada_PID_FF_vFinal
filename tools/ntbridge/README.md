@@ -71,7 +71,7 @@ MEC=bancada ./bateria.sh campanhas/bancada_kd.sh bat_20261112kd
 
 ```bash
 export NT_SERVER=10.96.4.2
-MEC=bancada ./autoajuste.sh aa_20261113                     # tudo (~1–1,5 h, robô habilitado)
+MEC=bancada ./autoajuste.sh aa_20261113                     # tudo (~1,5–2 h, robô habilitado)
 MEC=bancada ./autoajuste.sh aa_20261113 "modelo relatorio"   # só as etapas de cálculo
 ```
 
@@ -83,10 +83,34 @@ MEC=bancada ./autoajuste.sh aa_20261113 "modelo relatorio"   # só as etapas de 
 | `bateria` | gera `campanha_auto.sh` (atual × modelo × modelo×0,7 × modelo×1,4, e o kG do kit se diferir >15%) e roda 2 rodadas de cada; depois de cada rodada, `PARADAS_POR_RODADA` paradas no ponto fraco (`PARADA_ALVO`) | move |
 | `relatorio` | baixa o log; `pontua.py` dá a nota de cada configuração (pesos `NOTA_PESOS` do .conf; parada que oscilou pesa muito e tira a configuração da recomendação); escreve `RELATORIO.md` com a recomendação e a linha para a `MechanismConfig` | — |
 | `volta2` | se a melhor foi a de ganho MAIS ALTO testado (ou mais baixo): testa ela de novo + 2 degraus para aquele lado (× `VOLTA2_FATOR` e ×²; subindo, em ordem e parando na 1ª que oscilar) e refaz o relatório com tudo. Se a melhor está no meio da faixa, pula | move |
+| `volta3` | **refino de kD e kI** em volta da escolhida, um de cada vez: kD ×0,5 e ×2 (se for 0: o do LQR e o dobro); kI 0 e ×2 (se for 0: kP/`VOLTA3_TI_S` e o dobro). O LQR não dá kI (o modelo não tem atrito) e não vê a folga: esses dois só se acham testando. Relatório final com "de onde veio cada valor" | move |
 
 Validado na bancada em 2026-11-13 (`aa_20261113`): recomendou ficar com os valores do código, os
 mesmos achados à mão (relatório no CLAUDE.md). O teste de parada na bateria e a 2ª volta vieram
 depois, a partir daquele resultado (a melhor nota foi a de kP mais alto) — falta uma rodada no robô.
+
+### Usar num subsistema NOVO (o caminho para achar kG, kP, kI e kD)
+
+1. Código: o mecanismo usa o `MechanismSubsystem` com uma `MechanismConfig` própria (nome,
+   redução, gravidade, corrente, limites de curso). Ganhos de partida podem ser modestos (ex.:
+   kP pequeno, kI 0, kD 0) — o assistente procura os três.
+2. `mecanismos/<nome>.conf`: copie o da bancada; troque `NOME`, `TELEM`, `GRAVIDADE`, os `ALVOS`
+   (DENTRO do curso seguro), `FF_INICIO` (braço: perto da horizontal), `PARADA_ALVO/DE` (onde
+   a gravidade não segura contra a folga; sem isso, `PARADAS_POR_RODADA=0`) e, se quiser, os
+   pesos `NOTA_PESOS` (rapidez × precisão).
+3. Confira o sensor e o sentido com o robô (`docs/METODO_SUBSISTEMAS.md`, etapas 1–3) ANTES do
+   assistente: ele supõe que +tensão = +posição e que o zero está certo.
+4. `MEC=<nome> ./autoajuste.sh aa_<nome>_<data>` com o robô habilitado e alguém olhando
+   (~1,5–2 h). Pode rodar por etapas (`"ref ff modelo"`, depois `"bateria relatorio"`...).
+5. Leia `RELATORIO.md`: tabela, recomendação, **de onde veio cada valor** e a linha para a config.
+   Aprove, grave, deploy, e confirme com `robusto.sh` 2× e `testeparada.sh` vindo do código.
+
+**Cada volta é comparada só com a referência medida NA MESMA VOLTA** (a bateria repete a
+referência em toda volta). A recomendação da 1ª volta só muda numa volta seguinte se alguma
+configuração ganhar da referência daquela volta por mais que o empate (10%). Se a MESMA
+configuração piorar mais de 1,3× de uma volta para outra, o relatório abre com "⚠️ O MECANISMO
+MUDOU" — confira a mecânica (na bancada, em 2026-11-13, a folga/algo afrouxou entre as voltas e a
+passada foi de ~1° para ~3,5° com os mesmos ganhos).
 
 Nada é gravado no código: **uma pessoa lê o relatório e aprova**; depois grava na
 `MechanismConfig`, faz deploy e confirma com o robusto 2× vindo do código (e o `testeparada.sh`).

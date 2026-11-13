@@ -58,7 +58,43 @@ def _subidas(tv, a, b):
     return n
 
 
+_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _chave_cache(path):
+    """Muda se o log, o código da análise ou o .conf do mecanismo mudarem."""
+    import hashlib
+    h = hashlib.sha1()
+    st = os.stat(path)
+    h.update(f"{os.path.abspath(path)}|{st.st_size}|{st.st_mtime_ns}".encode())
+    for f in ("log_rodadas.py", "log_ana.py", "wpilog.py", "mec.py",
+              os.path.join("mecanismos", CFG.arquivo + ".conf")):
+        with open(os.path.join(_DIR, f), "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()
+
+
 def segmentos(path):
+    """Como _segmentos, com cache em logs/.cache (ler um .wpilog de centenas de MB leva minutos)."""
+    import pickle
+    pasta = os.path.join(_DIR, "logs", ".cache")
+    arq = os.path.join(pasta, _chave_cache(path) + ".pkl")
+    try:
+        with open(arq, "rb") as f:
+            return pickle.load(f)
+    except (OSError, EOFError, pickle.UnpicklingError):
+        pass
+    res = _segmentos(path)
+    try:
+        os.makedirs(pasta, exist_ok=True)
+        with open(arq, "wb") as f:
+            pickle.dump(res, f)
+    except OSError:
+        pass
+    return res
+
+
+def _segmentos(path):
     """(rodadas do robusto, testes de parada) de um .wpilog.
 
     Cada trecho com RemoteCmd 7 é um teste. Se todos os alvos dele estão em PARADA_ALVO/PARADA_DE,
@@ -124,7 +160,7 @@ def segmentos(path):
                 if sel.any():
                     bat[nome] = (float(vb[sel].min()), float(vb[sel].mean()))
         out.append(dict(
-            arquivo=os.path.basename(path), t=a, config={k: c[k] for k in variam},
+            arquivo=os.path.basename(path), t=a, config={k: c[k] for k in variam}, ajustes=dict(c),
             passa_med=float(rr[:, 1].mean()), passa_max=float(rr[:, 1].max()),
             grandes_med=float(grandes[:, 1].mean()) if len(grandes) else np.nan,
             erro=float(np.abs(rr[:, 2]).mean()), chega=float(np.nanmean(rr[:, 0])),
@@ -133,7 +169,7 @@ def segmentos(path):
             osc=_subidas(osc, a, b),
             n=len(rr), piores=[(p[4], p[5], p[1]) for p in piores], bat=bat))
     paradas = [dict(arquivo=os.path.basename(path), t=a,
-                    config={k: config[a][k] for k in variam}, paradas=n,
+                    config={k: config[a][k] for k in variam}, ajustes=dict(config[a]), paradas=n,
                     oscilou=_subidas(osc, a, b + 0.5)) for a, b, n in pars]
     return out, paradas
 

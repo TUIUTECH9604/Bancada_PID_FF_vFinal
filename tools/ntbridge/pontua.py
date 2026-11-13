@@ -41,24 +41,41 @@ def nota(d):
             + (P["problema"] if prob else 0.0)), prob
 
 
-def _chave(d):
+def _sig(v):
     # 6 algarismos significativos (não casas decimais: kD ~1e-5 perderia a diferença)
-    return tuple(sorted((k, float(f"{v:.6g}")) for k, v in d["config"].items()))
+    return float(f"{v:.6g}")
+
+
+def _chave(d, chaves=None):
+    if chaves is None or "ajustes" not in d:
+        return tuple(sorted((k, _sig(v)) for k, v in d["config"].items()))
+    v = {k: d["ajustes"].get(k, np.nan) for k in chaves}
+    return tuple((k, None if np.isnan(v[k]) else _sig(v[k])) for k in chaves)
 
 
 def agrupa(rodadas, paradas=()):
-    """{chave: {"rod": [rodadas do robusto], "par": [testes de parada]}}"""
+    """{chave: {"rod": [rodadas do robusto], "par": [testes de parada]}}
+
+    Com vários logs (o robô reiniciou entre as voltas), cada log acha "o que variou" só dentro
+    dele: a chave usa os ajustes que variam entre TODAS as rodadas juntas."""
+    todas = list(rodadas) + list(paradas)
+    chaves = None
+    if todas and all("ajustes" in d for d in todas):
+        nomes = sorted({k for d in todas for k in d["ajustes"]})
+        chaves = [k for k in nomes
+                  if len({_sig(d["ajustes"].get(k, np.nan)) for d in todas
+                          if not np.isnan(d["ajustes"].get(k, np.nan))}) > 1]
     grupos = {}
     for d in rodadas:
-        grupos.setdefault(_chave(d), {"rod": [], "par": []})["rod"].append(d)
+        grupos.setdefault(_chave(d, chaves), {"rod": [], "par": []})["rod"].append(d)
     for d in paradas:
-        if _chave(d) in grupos:  # parada sem rodada do robusto da mesma config: não pontua
-            grupos[_chave(d)]["par"].append(d)
+        if _chave(d, chaves) in grupos:  # parada sem rodada do robusto da mesma config: não pontua
+            grupos[_chave(d, chaves)]["par"].append(d)
     return grupos
 
 
 def agressividade(chave):
-    return sum(v for k, v in chave if k in AGRESSIVOS and not np.isnan(v))
+    return sum(v for k, v in chave if k in AGRESSIVOS and v is not None and not np.isnan(v))
 
 
 def recomenda(grupos, empate=0.10):
@@ -98,7 +115,7 @@ def paradas_txt(t):
 
 
 def texto(chave):
-    return " ".join(f"{k}={v:g}" for k, v in chave) or "(sem diferença)"
+    return " ".join(f"{k}={v:g}" if v is not None else f"{k}=?" for k, v in chave) or "(sem diferença)"
 
 
 if __name__ == "__main__":

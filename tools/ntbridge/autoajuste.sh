@@ -8,14 +8,16 @@
 #   5 relatorio baixa o log; nota de cada configuração (+ paradas no ponto fraco); RELATORIO.md
 #   6 volta2    se a melhor for a de ganho mais alto/baixo testado: +2 degraus para aquele lado,
 #               bateria de novo e relatório com tudo (se a melhor está no meio, pula)
+#   7 volta3    refino de kD (×0,5 e ×2) e kI (sem kI e ×2; se for 0, um valor de partida) em volta
+#               da escolhida, bateria e relatório final (o LQR não dá kI e não vê a folga)
 #
-# uso: [MEC=<mecanismo>] ./autoajuste.sh <pasta> [etapas: "ref ff modelo bateria relatorio volta2"]
-#      (robô HABILITADO nas etapas que movem: ref, ff, bateria, volta2; Disable para tudo na hora)
+# uso: [MEC=<mecanismo>] ./autoajuste.sh <pasta> [etapas: "ref ff modelo bateria relatorio volta2 volta3"]
+#      (robô HABILITADO nas etapas que movem: ref, ff, bateria, volta2, volta3; Disable para tudo na hora)
 # NADA é gravado no código: os ajustes ao vivo voltam aos de partida no fim da bateria.
 cd "$(dirname "$0")" || exit 1
 source ./mec.sh
 PASTA="${1:?uso: ./autoajuste.sh <pasta> [etapas]}"
-ETAPAS="${2:-ref ff modelo bateria relatorio volta2}"
+ETAPAS="${2:-ref ff modelo bateria relatorio volta2 volta3}"
 mkdir -p "$PASTA" logs
 IP="${NT_SERVER:-169.254.29.48}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -o LogLevel=ERROR)
@@ -95,6 +97,14 @@ for etapa in $ETAPAS; do
       esac
       habilitado volta2
       ./bateria.sh "$PASTA/campanha_volta2.sh" "$PASTA/bateria2" || echo "AVISO: a 2ª volta parou antes do fim (ver acima): o relatório usa o que deu"
+      LOG=$(baixa_log) || exit 1
+      echo "log: $LOG"
+      python autoajuste.py relatorio "$PASTA" "$LOG"
+      ;;
+    volta3)
+      python autoajuste.py campanha3 "$PASTA" || exit 1
+      habilitado volta3
+      ./bateria.sh "$PASTA/campanha_volta3.sh" "$PASTA/bateria3" || echo "AVISO: a 3ª volta parou antes do fim (ver acima): o relatório usa o que deu"
       LOG=$(baixa_log) || exit 1
       echo "log: $LOG"
       python autoajuste.py relatorio "$PASTA" "$LOG"

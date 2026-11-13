@@ -335,6 +335,34 @@ max, erro, chega, tremor, problema, parada; padrão em `mec.py`). Corrigido: o a
 arredondava em 9 casas decimais (kD 1,56252e-5 virava 1,5625e-5 e não achava o nome da
 candidata): agora 6 algarismos significativos. Tempo: ~4,5 min por configuração/rodada (antes
 ~1,6): assistente completo ~1–1,5 h.
+**2ª volta no robô (2026-11-13, log `FRC_20261113_200047`):** mod14 (kP 0,0095, kD 0,0000156)
+de novo: passa 1,0°, 0 de 5 paradas em 270°; **kP 0,0123 OSCILOU** logo no início → a bateria
+parou (PARA_SE_ABORTAR) sem testar 0,0160. Juntando as voltas: atual 3,76 (melhor), mod14 3,80
+(3 rodadas), modeloG 3,95 → **recomendação: ficar com os valores do código**. Corrigido: a
+campanha2 contava como "testadas" candidatas só geradas; as rodadas de logs diferentes não se
+juntavam (cada log achava "o que variou" só dentro dele: agora `pontua.agrupa` compara a
+configuração inteira entre todos os logs). Cache da análise por log em `logs/.cache` (o
+relatório passou de ~10 min para < 1 s).
+**3ª volta (`volta3`, só offline — falta rodar no robô):** pedido do usuário — o assistente vai
+ser usado em vários subsistemas e tem que ACHAR kP, kI e kD, não herdar. O LQR não dá kI (sem
+atrito no modelo) nem vê a folga: em volta da escolhida testa kD ×0,5/×2 e kI 0/×2 (se kD 0: o
+do LQR e o dobro; se kI 0: kP/`VOLTA3_TI_S` (0,3 s) e o dobro — dá 0,02 na bancada). O relatório
+diz "de onde veio cada valor". Na bancada: atual, D05, D2, I0, I2 (~45 min). README ganhou o
+roteiro "Usar num subsistema NOVO".
+**3ª volta no robô (2026-11-13 ~17:20, log `FRC_20261113_200047`) e O MECANISMO MUDOU:** com os
+MESMOS ganhos (atual), a passada foi de 1,0–1,3° (manhã; 16:35 ainda 1,4°) para **3,5–3,8°** (pior
+caso 75>90 de 5,0° para 7,1–7,5°), bateria 11,4–11,8 V, motor 25 °C → mecânica (folga/algo
+afrouxou entre ~16:40 e 17:20; antes disso o usuário balançou o ponteiro forte contra o motor nos
+testes da proteção). **Conferir a folga e os parafusos** antes de testar de novo. Dentro da 3ª
+volta (mesma condição): atual 1,00; kD×2 1,13; kD×0,5 1,14; kI×2 1,68 (vibrou parado); **sem kI
+2,36** (erro final 0,75°, movimentos sem chegar) → o kI é necessário; os valores do código
+continuam os melhores. O relatório antigo misturava as voltas e recomendou o mod07 da manhã:
+**corrigido** — cada volta é comparada com a SUA referência (`registra_volta`/`separa_voltas`), a
+recomendação só muda se ganhar da referência da volta por > 10%, e "⚠️ O MECANISMO MUDOU" se a
+mesma configuração piorar > 1,3× entre voltas (detectou: atual 3,76 → 8,10). Recomendação final:
+**atual** (kP 0,006, kI 0,02, kD 0,00015) — igual ao achado à mão, agora com kD e kI testados.
+Download de log grande com o robô HABILITADO derrubou a comunicação do DS uma vez (o robô
+desabilita sozinho); o usuário preferiu não limitar a banda: baixar com ele desabilitado.
 **Proteção contra oscilação refeita (2026-11-13, deploy feito; falta conferir mexendo à mão).**
 O usuário mexeu o ponteiro rápido na folga (Teleop, segurando 270°) e ela cortou o motor até
 desabilitar — numa partida, um tranco ou o operador mudando de sentido perderia o mecanismo até
