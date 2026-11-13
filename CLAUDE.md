@@ -368,8 +368,8 @@ em velocidade normal é ~0,032). Próximo (na simulação, sem robô): **modo do
 kit mede kS/kG/kV + etapa nova de acelerações curtas (kA) dentro de ±40°, a malha de velocidade do
 kit pelo kV medido, campanha a partir do FF medido + LQR + kI = kP/0,3 s, pular o `ref` sem ganhos;
 validar na bancada zerando tudo (resposta conhecida: kG ≈ 0,09, kP 0,006, kI 0,02, kD baixo).
-**Simulação calibrada pela 15:1 e MODO DO ZERO (2026-11-13 noite, só simulação — falta deploy e
-teste no robô).** `MechanismSim`: J 0,0056 kg·m² (era 0,000722, ponteiro sem redução), kS 0,114,
+**Simulação calibrada pela 15:1 e MODO DO ZERO (2026-11-13 noite; DEPLOY FEITO no mesmo dia — falta
+o teste no robô).** `MechanismSim`: J 0,0056 kg·m² (era 0,000722, ponteiro sem redução), kS 0,114,
 kG 0,052, motor livre 12/0,0318×15 ≈ 5660 RPM (era 4858) → `MechanismSimCalibracaoTest` (os
 degraus/rampas do SysId na simulação, `build/sim_sysid.csv`): kV 0,03182 (real 0,03177), kS 0,107,
 kG 0,053. SEM a folga de 5,6° ainda (a simulação passa menos do alvo que o real: próximo passo).
